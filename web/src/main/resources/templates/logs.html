@@ -24,7 +24,7 @@
             <thead><tr><th>When</th><th>Who</th><th>What</th><th>Details</th></tr></thead>
             <tbody><tr th:each="e : ${entries}">
                 <td class="muted" th:text="${@fmt.time(e.at())}"></td><td th:text="${e.actor()}"></td>
-                <td><span th:class="${e.action() == 'login_failed' ? 'badge bad' : 'badge'}" th:text="${e.action()}"></span></td>
+                <td><span th:class="${(e.action() == 'login_failed' or e.action() == 'two_factor_failed' or e.action() == 'two_factor_locked') ? 'badge bad' : 'badge'}" th:text="${e.action()}"></span></td>
                 <td th:text="${e.detail()}"></td></tr></tbody>
         </table>
     </div>

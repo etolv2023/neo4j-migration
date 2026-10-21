@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Second step · Neo4j Migration</title>
+    <link rel="stylesheet" th:href="@{/app.css}">
+</head>
+<body>
+<div class="login">
+    <div class="card">
+        <h1>Second step</h1>
+        <p class="sub">Enter the 6-digit code from your authenticator app.</p>
+        <div class="flash err" th:if="${error}" th:text="${error}"></div>
+        <form th:action="@{/login/code}" method="post">
+        <label for="code">Code</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" autofocus>
+        <p class="hint">No phone? Type one of your recovery codes instead. Each works once.</p>
+        <p><button type="submit" style="width:100%">Continue</button></p>
+        </form>
+        <form th:action="@{/logout}" method="post" style="margin:0"><button class="secondary" type="submit" style="width:100%">Cancel</button></form>
+    </div>
+</div>
+</body>
+</html>

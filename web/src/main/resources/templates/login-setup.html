@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Set up two-factor · Neo4j Migration</title>
+    <link rel="stylesheet" th:href="@{/app.css}">
+</head>
+<body>
+<div class="login">
+    <div class="card">
+        <h1>Set up two-factor sign-in</h1>
+        <p class="sub">This dashboard needs a second step for every user. It takes a minute.</p>
+        <div class="flash err" th:if="${error}" th:text="${error}"></div>
+        <p>1. Open an authenticator app (Google Authenticator, Authy, Microsoft Authenticator) and scan this code.</p>
+        <p style="text-align:center"><img th:src="${enrolment.qr()}" alt="QR code" width="220" height="220" style="background:#fff;border-radius:8px"></p>
+        <p class="hint">Cannot scan? Type this key into the app: <span class="mono" th:text="${enrolment.secret()}"></span></p>
+        <form th:action="@{/login/setup}" method="post">
+        <p>2. Enter the 6-digit code the app shows.</p>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" autofocus>
+        <p><button type="submit" style="width:100%">Turn on and continue</button></p>
+        </form>
+        <form th:action="@{/logout}" method="post" style="margin:0"><button class="secondary" type="submit" style="width:100%">Cancel</button></form>
+    </div>
+</div>
+</body>
+</html>

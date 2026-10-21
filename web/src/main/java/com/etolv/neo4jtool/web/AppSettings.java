@@ -30,6 +30,7 @@ import java.time.Duration;
  * @param idSetMemoryMb memory the selected ids may take in the application before they go to a file on disk
  * @param splitAsDirectory a split leaves a data directory instead of a dump file (no dump to write, no dump to load again)
  * @param maxJobs      migrations that may run at the same time
+ * @param requireTwoFactor every user must sign in with a second factor; a user without one is sent to set it up after the password
  */
 public record AppSettings(
         InstanceSettings.Runner runner,
@@ -58,7 +59,21 @@ public record AppSettings(
         String importMemory,
         int idSetMemoryMb,
         int maxJobs,
-        boolean splitAsDirectory) {
+        boolean splitAsDirectory,
+        boolean requireTwoFactor) {
+
+    /** The settings as they were before two-factor sign-in existed. */
+    public AppSettings(InstanceSettings.Runner runner, String dockerImage, String neo4jHome, String workDir, String outputDir,
+                       String backupDir, boolean mergeSwap, boolean copySchema, boolean checkAfterBuild, String tempHeap,
+                       String tempPageCache, int startTimeoutMinutes, String orgProperty, boolean includeNeighbours, int batchSize,
+                       int sampleSize, boolean analyseRelationships, boolean fastReader, String readerLib, String readerHeap,
+                       String readerPageCache, int workers, int importThreads, String importMemory, int idSetMemoryMb, int maxJobs,
+                       boolean splitAsDirectory) {
+        this(runner, dockerImage, neo4jHome, workDir, outputDir, backupDir, mergeSwap, copySchema, checkAfterBuild, tempHeap,
+                tempPageCache, startTimeoutMinutes, orgProperty, includeNeighbours, batchSize, sampleSize, analyseRelationships,
+                fastReader, readerLib, readerHeap, readerPageCache, workers, importThreads, importMemory, idSetMemoryMb, maxJobs,
+                splitAsDirectory, false);
+    }
 
     /** The settings as they were before the speed options existed: those get their defaults. */
     public AppSettings(InstanceSettings.Runner runner, String dockerImage, String neo4jHome, String workDir, String outputDir,
@@ -67,7 +82,7 @@ public record AppSettings(
                        int sampleSize, boolean analyseRelationships) {
         this(runner, dockerImage, neo4jHome, workDir, outputDir, backupDir, mergeSwap, copySchema, checkAfterBuild, tempHeap,
                 tempPageCache, startTimeoutMinutes, orgProperty, includeNeighbours, batchSize, sampleSize, analyseRelationships,
-                true, "", "2g", "2g", defaultWorkers(), 0, "", 512, 2, false);
+                true, "", "2g", "2g", defaultWorkers(), 0, "", 512, 2, false, false);
     }
 
     public static int defaultWorkers() {

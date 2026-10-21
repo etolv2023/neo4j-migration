@@ -77,6 +77,38 @@ without Docker.
 - It starts the dashboard in the background and does not restart it after a reboot; if you want that, run `start` from your
   system's boot mechanism.
 
+### Putting it behind Apache (HTTPS and a first password)
+
+The dashboard listens on 127.0.0.1 only. To reach it from outside, let Apache terminate HTTPS and pass requests on. With
+`mod_proxy`, `mod_proxy_http`, `mod_headers` and `mod_ssl` enabled (`a2enmod proxy proxy_http headers ssl`), and a certificate from
+`certbot --apache -d dash.example.com`, the HTTPS virtual host holds:
+
+    <VirtualHost *:443>
+        ServerName dash.example.com
+        # ... the SSLCertificate lines certbot added ...
+
+        ProxyPreserveHost On
+        RequestHeader set X-Forwarded-Proto expr=%{REQUEST_SCHEME}
+        ProxyPass / http://127.0.0.1:8085/
+        ProxyPassReverse / http://127.0.0.1:8085/
+
+        # An extra password before the dashboard's own login page (optional, recommended)
+        <Location />
+            AuthType Basic
+            AuthName "Neo4j Migration"
+            AuthUserFile /etc/apache2/.htpasswd-dash
+            Require valid-user
+            # do not pass the proxy password on: the dashboard has its own login
+            RequestHeader unset Authorization
+        </Location>
+    </VirtualHost>
+
+- Create the password file with `htpasswd -c /etc/apache2/.htpasswd-dash someone` (`-c` only the first time), then `apache2ctl configtest && systemctl reload apache2`.
+- Keep the `<Location>` block **inside** the `<VirtualHost *:443>`. Outside it, it applies to every site on the machine.
+- Put these in the dashboard's settings file `/etc/neo4j-migration/env` and restart, so that links and the secure cookie are right behind the proxy:
+  `SERVER_PORT='8085'` (any free port; Jenkins uses 8080), `SERVER_FORWARD_HEADERS_STRATEGY='framework'`, `SERVER_SERVLET_SESSION_COOKIE_SECURE='true'`.
+- Check from outside: `curl -sI https://dash.example.com/login` answers `401` without the proxy password.
+
 ## 3. The flow
 
 1. **Databases** — tell the tool where the backup and the live database are (section 4). Each is one of three kinds.
@@ -314,19 +346,58 @@ Things to know:
 | Ids per query | batch size of the dry run (min 100; default 10,000) |
 | Examples per section | how many example rows the report keeps |
 | Check relationships | switch off to make the dry run faster |
+| Require two-factor sign-in for every user | off by default; when on, a user who has not set it up is sent to do so right after the password. You can only turn it on once your own account has two-factor. |
 
 The speed settings change how fast the work goes, never what comes out: the tests compare the files, counts and fingerprints for
 different numbers of threads. Reading a stopped data directory in place does not change it (the reader copies the few files Neo4j
 rewrites on opening, and refuses a store that was not shut down cleanly); the user of the dashboard needs write permission on the
 record files because Neo4j opens them for writing. Details and measurements: `docs/RESULTS.md`, Stage D.
 
-Settings are stored in MySQL and apply to the next job. You can also change your password on this page.
+Settings are stored in MySQL and apply to the next job. You can also change your password and turn two-factor sign-in on or off for your own account on this page (see section 8).
 
 ## 8. Logs and users
 
 - **Logs → Jobs**: everything a plan or dry run printed, including the commands used to load dumps.
 - **Logs → What people did**: who created, planned, dry-ran, changed settings, and so on.
-- **Logs → Sign-ins**: every successful and failed login with the address it came from.
+- **Logs → Sign-ins**: every successful and failed login with the address it came from, and the steps of two-factor sign-in
+  (`password_ok`, `two_factor_failed`, `two_factor_locked`, `recovery_code_used`).
+
+### Users
+
+**Users** in the menu lists everyone who can sign in. Every user can do everything; there are no other roles.
+
+- **Add a user:** a name (3 to 100 letters, digits, `.`, `-`, `_`, `@`) and a password of at least 8 characters. They can change it in Settings.
+- **Switch off / on:** a switched-off user cannot sign in, and a session they have open ends on its next click. Nothing of theirs is deleted.
+- **Set password:** you give another user a new password (you change your own in Settings).
+- **Delete:** removes the user and their recovery codes. Their entries in the logs stay.
+- You cannot switch off or delete the account you are using, so there is always someone who can sign in.
+
+Users and their password hashes live in the MySQL table `users`. Passwords are never stored in a readable form.
+
+### Two-factor sign-in (authenticator app)
+
+The second step is a 6-digit code that an authenticator app computes (Google Authenticator, Authy, Microsoft Authenticator, 1Password
+and others). It follows the standard (RFC 6238); nothing is sent to any outside service.
+
+- **Turn it on:** Settings → *Two-factor sign-in* → *Set up*. Scan the QR code (or type the key into the app), then enter the code the app
+  shows. The tool then shows **8 recovery codes, once**. Save them away from the phone.
+- **Signing in:** user and password first, then the code. A code works once; wait for the next one if you typed it twice.
+- **Lost phone:** type a recovery code instead of the 6-digit code. Each recovery code works one time.
+- **Lost phone and recovery codes:** another user opens *Users* and presses *Turn off 2FA* next to your name; you sign in with your
+  password and set it up again.
+- **Turn it off for yourself:** Settings, with your password (not possible while two-factor is required for everyone).
+- **Wrong codes:** 5 wrong codes within 5 minutes lock the second step of that user for the rest of the 5 minutes, even for a right
+  code. Every wrong code, lock and recovery code used is in *Logs → Sign-ins*.
+- **The clock:** the code depends on the time. The server must keep its clock right (`timedatectl` should say "System clock synchronized: yes"); the
+  tool accepts the code before and after the current one to forgive a few seconds of difference on the phone.
+- The key is stored in MySQL encrypted with `TOOL_SECRET`; recovery codes are stored as hashes. If you change `TOOL_SECRET`, two-factor
+  keys become unreadable: turn two-factor off for those users (below) and set it up again.
+
+**If nobody can sign in** (the only user lost the phone and the recovery codes), turn two-factor off directly in MySQL, then sign in with the password and set it up again:
+
+    mysql neo4j_tool -e "UPDATE users SET totp_enabled = FALSE, totp_secret_enc = NULL, totp_last_step = 0 WHERE username = 'admin'; DELETE FROM recovery_codes WHERE user_id = (SELECT id FROM users WHERE username = 'admin');"
+
+If you also forgot the password, make a new hash with `htpasswd -bnBC 10 "" 'the new password' | tr -d ':\n'` (it starts with `$2y$`, which the tool accepts) and put it in `users.password_hash`.
 
 A job that fails goes back to its previous state with the reason shown on the migration page and in the log. If the dashboard
 restarts while a job is running, that job is marked as interrupted.
@@ -383,5 +454,6 @@ Unknown keys are rejected so that a typo cannot silently select everything.
 | Stopped directory fails with a lock error | The server is still running. Stop it completely. |
 | A `neo4j-migration-…` container is still running after the dashboard was killed | Jobs clean up after themselves when they end or fail. If the dashboard process was killed during a job, the temporary container stays: remove it with `docker rm -f <name>` and delete its folder under the work directory. |
 | A temporary server does not start in time | Raise "Wait up to" and the memory in Settings; check free disk in the work directory. |
+| "That code is wrong or already used" although the code looks right | The clocks differ (check `timedatectl` on the server and the phone's automatic time), or that code was already used: wait for the next one. |
 | Everything is selected | You left every filter empty. The warning says so. |
 | Dry run is BLOCKED | Some selected ids hold different nodes on the target; open the report and look at the examples. |

@@ -1,6 +1,7 @@
 package com.etolv.neo4jtool.web;
 
 import com.etolv.neo4jtool.engine.instance.InstanceSettings.Runner;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -18,8 +19,10 @@ public class SettingsController {
     private final UserStore users;
     private final PasswordEncoder encoder;
     private final AuditLog audit;
+    private final TwoFactorService twoFactor;
 
-    public SettingsController(SettingsStore settings, UserStore users, PasswordEncoder encoder, AuditLog audit) {
+    public SettingsController(SettingsStore settings, UserStore users, PasswordEncoder encoder, AuditLog audit, TwoFactorService twoFactor) {
+        this.twoFactor = twoFactor;
         this.settings = settings;
         this.users = users;
         this.encoder = encoder;
@@ -27,8 +30,11 @@ public class SettingsController {
     }
 
     @GetMapping("/settings")
-    String show(Model model) {
+    String show(Model model, Authentication auth, HttpSession session) {
         model.addAttribute("settings", settings.get());
+        model.addAttribute("twoFactorOn", users.hasTwoFactor(auth.getName()));
+        model.addAttribute("recoveryLeft", twoFactor.recoveryCodesLeft(auth.getName()));
+        model.addAttribute("enrolment", session.getAttribute(TwoFactorController.PENDING));
         model.addAttribute("runners", Runner.values());
         return "settings";
     }
@@ -47,13 +53,18 @@ public class SettingsController {
                 @RequestParam(defaultValue = "1") int workers, @RequestParam(defaultValue = "0") int importThreads,
                 @RequestParam(defaultValue = "") String importMemory, @RequestParam(defaultValue = "512") int idSetMemoryMb,
                 @RequestParam(defaultValue = "2") int maxJobs,
-                @RequestParam(defaultValue = "false") boolean splitAsDirectory, RedirectAttributes redirect) {
+                @RequestParam(defaultValue = "false") boolean splitAsDirectory,
+                @RequestParam(defaultValue = "false") boolean requireTwoFactor, Authentication auth, RedirectAttributes redirect) {
+        if (requireTwoFactor && !settings.get().requireTwoFactor() && !users.hasTwoFactor(auth.getName())) {
+            redirect.addFlashAttribute("error", "Turn on two-factor sign-in for your own account first, so you do not lock yourself out");
+            return "redirect:/settings";
+        }
         try {
             settings.save(new AppSettings(runner, dockerImage.strip(), neo4jHome.strip(), workDir.strip(), outputDir.strip(), backupDir.strip(), mergeSwap, copySchema,
                     checkAfterBuild, tempHeap.strip(),
                     tempPageCache.strip(), startTimeoutMinutes, orgProperty.strip(), includeNeighbours, batchSize, sampleSize, analyseRelationships,
                     fastReader, readerLib.strip(), readerHeap.strip(), readerPageCache.strip(), workers, importThreads,
-                    importMemory.strip(), idSetMemoryMb, maxJobs, splitAsDirectory));
+                    importMemory.strip(), idSetMemoryMb, maxJobs, splitAsDirectory, requireTwoFactor));
             audit.record("settings_save", null);
             redirect.addFlashAttribute("message", "Settings saved");
         } catch (IllegalArgumentException e) {

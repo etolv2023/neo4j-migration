@@ -40,7 +40,7 @@ public class AuditLog {
 
     /** Only sign-ins, failed sign-ins and sign-outs. */
     public List<Entry> latestLogins(int limit) {
-        return jdbc.sql("SELECT id, at, actor, action, detail FROM audit_log WHERE action IN ('login', 'login_failed', 'logout') "
+        return jdbc.sql("SELECT id, at, actor, action, detail FROM audit_log WHERE action IN ('login', 'login_failed', 'logout', 'password_ok', 'two_factor_failed', 'two_factor_locked', 'recovery_code_used') "
                         + "ORDER BY id DESC LIMIT ?")
                 .param(limit)
                 .query(AuditLog::map)

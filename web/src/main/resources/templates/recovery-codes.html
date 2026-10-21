@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page('Recovery codes', ~{::main}, 'settings')}">
+<body>
+<main>
+    <div class="head"><div><h1>Two-factor sign-in is on</h1><p class="sub">Save your recovery codes now. They are shown only once.</p></div></div>
+    <div class="card">
+        <h2>Recovery codes</h2>
+        <p>If you lose your phone, type one of these instead of the 6-digit code. Each works one time. Keep them somewhere safe, away from the phone.</p>
+        <p class="mono" style="columns:2;max-width:360px;font-size:16px;line-height:1.9"><span th:each="c : ${codes}" th:text="${c}" style="display:block"></span></p>
+        <p><a class="btn" th:href="@{/settings}">I saved them</a></p>
+    </div>
+</main>
+</body>
+</html>

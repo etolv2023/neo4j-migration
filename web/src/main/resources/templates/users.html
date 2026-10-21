@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page('Users', ~{::main}, 'users')}">
+<body>
+<main>
+    <div class="head"><div><h1>Users</h1><p class="sub">Everyone here can do everything in the dashboard. Switch a user off to stop them signing in without deleting them.</p></div></div>
+
+    <div class="card">
+        <table>
+            <thead><tr><th>User</th><th>Status</th><th>Two-factor</th><th>Added</th><th></th></tr></thead>
+            <tbody>
+            <tr th:each="u : ${users}">
+                <td><b th:text="${u.username()}"></b> <span class="pill" th:if="${u.username() == #authentication.name}">you</span></td>
+                <td><span th:class="${u.enabled()} ? 'badge ok' : 'badge bad'" th:text="${u.enabled()} ? 'Can sign in' : 'Switched off'"></span></td>
+                <td><span th:class="${u.twoFactor()} ? 'badge ok' : 'badge'" th:text="${u.twoFactor()} ? 'On' : 'Off'"></span></td>
+                <td class="muted" th:text="${@fmt.time(u.createdAt())}"></td>
+                <td><div class="actions">
+                    <form class="inline" th:if="${u.twoFactor()}" th:action="@{/users/{id}/two-factor/disable(id=${u.id()})}" method="post"
+                          onsubmit="return confirm('Turn off two-factor sign-in for this user? Use it when they lost their phone.')">
+                        <button class="secondary" type="submit">Turn off 2FA</button></form>
+                    <form class="inline" th:if="${u.username() != #authentication.name}" th:action="@{/users/{id}/enabled(id=${u.id()})}" method="post">
+                        <input type="hidden" name="enabled" th:value="${!u.enabled()}">
+                        <button class="secondary" type="submit" th:text="${u.enabled()} ? 'Switch off' : 'Switch on'"></button></form>
+                    <form class="inline" th:if="${u.username() != #authentication.name}" th:action="@{/users/{id}/delete(id=${u.id()})}" method="post"
+                          onsubmit="return confirm('Delete this user for good?')">
+                        <button class="danger" type="submit">Delete</button></form>
+                </div></td>
+            </tr>
+            <tr th:each="u : ${users}" th:if="${u.username() != #authentication.name}">
+                <td colspan="5" style="border-top:0;padding-top:0">
+                    <form class="actions" th:action="@{/users/{id}/password(id=${u.id()})}" method="post">
+                        <span class="muted" th:text="'New password for ' + ${u.username()}"></span>
+                        <input name="password" type="password" placeholder="New password" autocomplete="new-password" style="max-width:220px">
+                        <input name="confirm" type="password" placeholder="Again" autocomplete="new-password" style="max-width:220px">
+                        <button class="secondary" type="submit">Set password</button>
+                    </form>
+                </td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <form class="card" th:action="@{/users}" method="post">
+        <h2>Add a user</h2>
+        <div class="row">
+            <div><label for="username">User name</label><input id="username" name="username" type="text" autocomplete="off"></div>
+            <div><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="new-password"></div>
+            <div><label for="confirm">Password again</label><input id="confirm" name="confirm" type="password" autocomplete="new-password"></div>
+        </div>
+        <p class="hint">At least 8 characters. They can change it themselves in Settings and turn on two-factor sign-in there.</p>
+        <p><button type="submit">Add user</button></p>
+    </form>
+</main>
+</body>
+</html>

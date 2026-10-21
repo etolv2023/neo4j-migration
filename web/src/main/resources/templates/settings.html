@@ -79,6 +79,8 @@
         <p class="hint">For example the lines of an invoice when only the invoice carries the company. One step only; a node that carries another company's value is never added. Each migration can switch it off.</p>
         <label class="check"><input type="checkbox" name="analyseRelationships" value="true" th:checked="${settings.analyseRelationships()}"> Check relationships in the dry run</label>
         <p class="hint">Switch it off to make a dry run faster when you only care about nodes.</p>
+        <label class="check"><input type="checkbox" name="requireTwoFactor" value="true" th:checked="${settings.requireTwoFactor()}"> Require two-factor sign-in for every user</label>
+        <p class="hint">A user who has not set it up yet is asked to after the password. Turn on your own two-factor sign-in first.</p>
         <p><button type="submit">Save settings</button></p>
     </form>
 
@@ -91,6 +93,32 @@
         </div>
         <p><button type="submit">Change password</button></p>
     </form>
+    <div class="card">
+        <h2>Two-factor sign-in</h2>
+        <th:block th:if="${twoFactorOn}">
+            <p><span class="badge ok">On</span> You are asked for a code from your authenticator app after the password.
+                <span class="muted" th:text="${recoveryLeft} + ' recovery codes left.'"></span></p>
+            <form class="actions" th:action="@{/settings/2fa/disable}" method="post">
+                <input name="password" type="password" placeholder="Your password" autocomplete="current-password" style="max-width:240px">
+                <button class="danger" type="submit">Turn off</button>
+            </form>
+        </th:block>
+        <th:block th:if="${!twoFactorOn and enrolment == null}">
+            <p><span class="badge">Off</span> Add a second step to your sign-in with an authenticator app (Google Authenticator, Authy, Microsoft Authenticator).</p>
+            <form th:action="@{/settings/2fa/start}" method="post"><button type="submit">Set up two-factor sign-in</button></form>
+        </th:block>
+        <th:block th:if="${!twoFactorOn and enrolment != null}">
+            <p>1. Scan this code with the app.</p>
+            <p><img th:src="${enrolment.qr()}" alt="QR code" width="220" height="220" style="background:#fff;border-radius:8px"></p>
+            <p class="hint">Cannot scan? Type this key into the app: <span class="mono" th:text="${enrolment.secret()}"></span></p>
+            <p>2. Enter the 6-digit code the app shows.</p>
+            <form class="actions" th:action="@{/settings/2fa/enable}" method="post">
+                <input name="code" type="text" inputmode="numeric" autocomplete="one-time-code" style="max-width:160px">
+                <button type="submit">Turn on</button>
+            </form>
+            <form th:action="@{/settings/2fa/cancel}" method="post" style="margin-top:8px"><button class="secondary" type="submit">Cancel</button></form>
+        </th:block>
+    </div>
 </main>
 </body>
 </html>
