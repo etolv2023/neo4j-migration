@@ -1,0 +1,429 @@
+package com.etolv.neo4jtool.web;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.flash;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrlPattern;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
+import org.neo4j.driver.AuthTokens;
+import org.neo4j.driver.Driver;
+import org.neo4j.driver.GraphDatabase;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.containers.Neo4jContainer;
+import org.testcontainers.utility.DockerImageName;
+
+/**
+ * The dashboard against a real MySQL (Flyway creates the tables) and two real Neo4j servers:
+ * a "backup" with everything and a "live" that lost some nodes and has one clashing id.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+class WebIT {
+
+    private static final String NEO4J_IMAGE = System.getProperty("neo4j.image", "neo4j:5.26.29-community");
+
+    static final MySQLContainer<?> MYSQL = new MySQLContainer<>(DockerImageName.parse("mysql:8.4"))
+            .withDatabaseName("neo4j_tool");
+    static final Neo4jContainer<?> BACKUP = neo4j();
+    static final Neo4jContainer<?> LIVE = neo4j();
+
+    private static Neo4jContainer<?> neo4j() {
+        return new Neo4jContainer<>(DockerImageName.parse(NEO4J_IMAGE)).withoutAuthentication()
+                .withEnv("NEO4J_server_memory_heap_max__size", "512m")
+                .withEnv("NEO4J_server_memory_pagecache_size", "128m");
+    }
+
+    @DynamicPropertySource
+    static void properties(DynamicPropertyRegistry registry) {
+        MYSQL.start();
+        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
+        registry.add("spring.datasource.username", MYSQL::getUsername);
+        registry.add("spring.datasource.password", MYSQL::getPassword);
+        registry.add("tool.secret", () -> "integration-test-secret");
+        registry.add("tool.admin.user", () -> "admin");
+        registry.add("tool.admin.password", () -> "correct horse battery");
+    }
+
+    @BeforeAll
+    static void seedNeo4j() {
+        BACKUP.start();
+        LIVE.start();
+        for (Neo4jContainer<?> db : List.of(BACKUP, LIVE)) {
+            run(db, "UNWIND range(1, 10) AS i CREATE (:Service {org_id: 1})");
+            run(db, "UNWIND range(1, 10) AS i CREATE (:Service {org_id: 2})");
+            run(db, "MATCH (a) WHERE id(a) = 10 MATCH (b) WHERE id(b) = 11 CREATE (a)-[:NEXT]->(b)");
+        }
+        run(LIVE, "MATCH (n) WHERE id(n) < 3 DETACH DELETE n");            // lost org 1 ids 0-2
+        run(LIVE, "MATCH (n) WHERE id(n) = 15 SET n.org_id = 9");           // id 15 now holds another node
+    }
+
+    private static void run(Neo4jContainer<?> db, String cypher) {
+        try (Driver driver = GraphDatabase.driver(db.getBoltUrl(), AuthTokens.none()); var session = driver.session()) {
+            session.run(cypher).consume();
+        }
+    }
+
+    @Autowired MockMvc mvc;
+    @Autowired JdbcClient jdbc;
+    @Autowired EndpointStore endpoints;
+    @Autowired MigrationStore migrations;
+    @Autowired SettingsStore settings;
+    @Autowired SecretBox secrets;
+    @Autowired ReportStore reports;
+    @Autowired UserStore users;
+
+    private static final org.springframework.test.web.servlet.request.RequestPostProcessor ADMIN = user("admin").roles("ADMIN");
+
+    @Test
+    @Order(1)
+    void everythingExceptTheLoginPageNeedsALogin() throws Exception {
+        for (String path : List.of("/", "/migrations", "/migrations/new", "/endpoints", "/logs", "/settings")) {
+            mvc.perform(get(path)).andExpect(status().is3xxRedirection()).andExpect(redirectedUrlPattern("**/login"));
+        }
+        mvc.perform(get("/login")).andExpect(status().isOk());
+    }
+
+    @Test
+    @Order(2)
+    void loginChecksThePasswordAndEveryAttemptIsRecorded() throws Exception {
+        mvc.perform(post("/login").param("username", "admin").param("password", "wrong").with(csrf()))
+                .andExpect(redirectedUrl("/login?error"));
+        mvc.perform(post("/login").param("username", "admin").param("password", "correct horse battery").with(csrf()))
+                .andExpect(status().is3xxRedirection()).andExpect(redirectedUrl("/"));
+        mvc.perform(post("/endpoints").param("name", "x")).andExpect(status().isForbidden());     // no CSRF token
+
+        assertThat(jdbc.sql("SELECT action FROM audit_log").query(String.class).list()).contains("login", "login_failed");
+        mvc.perform(get("/logs").param("tab", "logins").with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("login_failed")));
+        assertThat(jdbc.sql("SELECT password_hash FROM users WHERE username = 'admin'").query(String.class).single())
+                .startsWith("$2").doesNotContain("correct horse");
+    }
+
+    @Test
+    @Order(3)
+    void endpointsAreSavedAndPasswordsAreStoredEncrypted() throws Exception {
+        addEndpoint("backup", "LIVE", BACKUP.getBoltUrl(), "", "");
+        addEndpoint("live", "LIVE", LIVE.getBoltUrl(), "", "");
+        addEndpoint("secured", "LIVE", "bolt://secured.invalid:7687", "neo4j", "s3cret-pass-phrase");
+        addEndpoint("backup", "LIVE", BACKUP.getBoltUrl(), "", "");        // duplicate name
+
+        assertThat(endpoints.all()).extracting(Endpoint::name).containsExactly("backup", "live", "secured");
+        String stored = jdbc.sql("SELECT password_enc FROM endpoints WHERE name = 'secured'").query(String.class).single();
+        assertThat(stored).isNotBlank().doesNotContain("s3cret");
+        assertThat(secrets.decrypt(stored)).isEqualTo("s3cret-pass-phrase");
+        assertThat(jdbc.sql("SELECT password_enc IS NULL FROM endpoints WHERE name = 'backup'").query(Boolean.class).single()).isTrue();
+
+        mvc.perform(get("/endpoints").with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(not(containsString("s3cret"))))
+                .andExpect(content().string(containsString("Live server")));
+        mvc.perform(post("/endpoints/" + endpointId("backup") + "/check").with(ADMIN).with(csrf()))
+                .andExpect(status().is3xxRedirection()).andExpect(flash().attribute("message", containsString("Connected, Neo4j")));
+        mvc.perform(post("/endpoints/" + endpointId("secured") + "/check").with(ADMIN).with(csrf()))
+                .andExpect(flash().attributeExists("error"));
+    }
+
+    @Test
+    @Order(4)
+    void dumpsAndDataDirectoriesAreCheckedWhenTheyAreAdded() throws Exception {
+        Path folder = Files.createTempDirectory("webit");
+        Path dump = Files.writeString(folder.resolve("neo4j.dump"), "not a real dump");
+        Path dataDir = Files.createDirectories(folder.resolve("data/databases/neo4j"));
+
+        mvc.perform(post("/endpoints").param("name", "no file").param("kind", "DUMP").param("location", folder.resolve("missing.dump").toString())
+                .with(ADMIN).with(csrf())).andExpect(flash().attribute("error", containsString("There is no file")));
+        mvc.perform(post("/endpoints").param("name", "wrong dir").param("kind", "STOPPED").param("location", folder.toString())
+                .with(ADMIN).with(csrf())).andExpect(flash().attribute("error", containsString("data directory")));
+        assertThat(endpoints.all()).extracting(Endpoint::name).doesNotContain("no file", "wrong dir");
+
+        addEndpoint("a dump", "DUMP", dump.toString(), "ignored", "ignored");
+        addEndpoint("a stopped server", "STOPPED", folder.resolve("data").toString(), "", "");
+        assertThat(dataDir).isDirectory();
+        assertThat(endpoints.find(endpointId("a dump")).orElseThrow().passwordEnc()).as("passwords belong to live servers only").isNull();
+
+        mvc.perform(post("/endpoints/" + endpointId("a dump") + "/check").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("message", containsString("Found")));
+        mvc.perform(get("/endpoints").with(ADMIN)).andExpect(content().string(containsString(dump.toString())));
+    }
+
+    @Test
+    @Order(5)
+    void schemaPageShowsLabelsAndOrgBreakdown() throws Exception {
+        mvc.perform(get("/endpoints/" + endpointId("backup") + "/schema").param("orgBreakdown", "true").with(ADMIN))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Service")))
+                .andExpect(content().string(containsString("NEXT")))
+                .andExpect(content().string(containsString("2: 10")));
+    }
+
+    @Test
+    @Order(6)
+    void aServerThatCannotBeReachedShowsTheErrorInsteadOfFailing() throws Exception {
+        mvc.perform(get("/endpoints/" + endpointId("secured") + "/schema").with(ADMIN))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("class=\"flash err\"")));
+    }
+
+    @Test
+    @Order(7)
+    void aMigrationNeedsAName_aSource_andAValidSelection() throws Exception {
+        long before = migrations.all().size();
+        long backup = endpointId("backup");
+
+        for (var bad : List.of(
+                Map.of("name", "", "source", String.valueOf(backup)),
+                Map.of("name", "no source"),
+                Map.of("name", "same", "source", String.valueOf(backup), "target", String.valueOf(backup)),
+                Map.of("name", "bad ids", "source", String.valueOf(backup), "ids", "12, abc"),
+                Map.of("name", "bad range", "source", String.valueOf(backup), "idRanges", "5000 to 9000"))) {
+            var request = post("/migrations").with(ADMIN).with(csrf());
+            for (var e : bad.entrySet()) {
+                request = request.param(e.getKey(), e.getValue());
+            }
+            mvc.perform(request).andExpect(status().isOk()).andExpect(content().string(containsString("class=\"flash err\"")));
+        }
+        assertThat((long) migrations.all().size()).isEqualTo(before);
+    }
+
+    @Test
+    @Order(8)
+    void planThenDryRun_findsTheClashAndBlocks() throws Exception {
+        long id = createMigration("org 2 back to live", "backup", "live", Map.of("orgIds", "2"));
+
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("org 2 back to live")));
+        mvc.perform(post("/migrations/" + id + "/dry-run").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("plan first")));     // the order of the flow is enforced
+
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf())).andExpect(redirectedUrl("/migrations/" + id));
+        Migration planned = awaitState(id, Migration.State.PLANNED);
+        MigrationPlan plan = com.etolv.neo4jtool.engine.Json.read(planned.planJson(), MigrationPlan.class);
+        assertThat(plan.selectedNodes()).isEqualTo(10);
+        assertThat(plan.mode()).isEqualTo("MERGE");
+        assertThat(plan.from().nodes()).isEqualTo(20);
+        assertThat(plan.steps()).anyMatch(s -> !s.available());
+
+        mvc.perform(post("/migrations/" + id + "/dry-run").with(ADMIN).with(csrf())).andExpect(redirectedUrl("/migrations/" + id));
+        Migration done = awaitState(id, Migration.State.DRY_RUN_DONE);
+
+        ReportStore.Row row = reports.find(done.dryRunId()).orElseThrow();
+        assertThat(row.gate()).isEqualTo("BLOCKED");
+        assertThat(row.selectedNodes()).isEqualTo(10);
+        assertThat(row.sameNodes()).isEqualTo(9);
+        assertThat(row.conflictNodes()).isEqualTo(1);
+        assertThat(row.migrationId()).isEqualTo(id);
+
+        mvc.perform(get("/dry-runs/" + row.id()).with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("Blocked")))
+                .andExpect(content().string(containsString("Id used by a different node")));
+        mvc.perform(get("/dry-runs/" + row.id() + "/report.json").with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"selected_nodes\"")));
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(content().string(containsString(">BLOCKED<")));
+        assertThat(jdbc.sql("SELECT message FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list())
+                .anyMatch(m -> m.contains("Plan ready")).anyMatch(m -> m.contains("Dry run finished: BLOCKED"));
+        mvc.perform(get("/logs").param("tab", "jobs").with(ADMIN)).andExpect(content().string(containsString("Plan ready")));
+    }
+
+    @Test
+    @Order(9)
+    void orgOneShowsTheNodesLostOnTheLiveDatabase() throws Exception {
+        long id = createMigration("org 1", "backup", "live", Map.of("orgIds", "1"));
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));
+        awaitState(id, Migration.State.PLANNED);
+        mvc.perform(post("/migrations/" + id + "/dry-run").with(ADMIN).with(csrf()));
+        Migration done = awaitState(id, Migration.State.DRY_RUN_DONE);
+
+        ReportStore.Row row = reports.find(done.dryRunId()).orElseThrow();
+        assertThat(row.gate()).isEqualTo("CLEAR");
+        assertThat(row.missingNodes()).isEqualTo(3);
+        assertThat(row.sameNodes()).isEqualTo(7);
+    }
+
+    @Test
+    @Order(10)
+    void idsRangesAndLabelsReachTheEngine_andSplittingNeedsNoTarget() throws Exception {
+        long id = createMigration("split", "backup", null, Map.of("idRanges", "0-4", "ids", "15", "excludeIds", "2", "labels", "Service"));
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));
+        Migration planned = awaitState(id, Migration.State.PLANNED);
+
+        MigrationPlan plan = com.etolv.neo4jtool.engine.Json.read(planned.planJson(), MigrationPlan.class);
+        assertThat(plan.mode()).isEqualTo("SPLIT");
+        assertThat(plan.selectedNodes()).isEqualTo(5);      // 0,1,3,4 and 15; id 2 is excluded
+        assertThat(plan.to()).isNull();
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(status().isOk());
+    }
+
+    @Test
+    @Order(11)
+    void aFailedJobGoesBackToItsStateWithTheReason() throws Exception {
+        long bad = endpointId("a dump");           // the file is not a dump, so loading it fails
+        long id = migrations.create("broken", endpoints.find(bad).orElseThrow(), null, "org_ids: [1]\n");
+
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));
+        Migration after = awaitState(id, Migration.State.DRAFT, Duration.ofSeconds(180));
+
+        assertThat(after.lastError()).isNotBlank();
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("The last step failed")));
+        assertThat(jdbc.sql("SELECT level FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list())
+                .contains("ERROR");
+    }
+
+    @Test
+    @Order(12)
+    void aMigrationThatIsWorkingCannotBeStartedTwiceOrDeleted() throws Exception {
+        long id = createMigration("busy", "backup", "live", Map.of("orgIds", "1"));
+        migrations.start(id, Migration.State.PLANNING);
+
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("already working")));
+        mvc.perform(post("/migrations/" + id + "/delete").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("working right now")));
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(content().string(containsString("http-equiv=\"refresh\"")));
+        assertThat(migrations.find(id)).isPresent();
+
+        assertThat(migrations.failInterrupted()).isEqualTo(1);        // what a restart does
+        assertThat(migrations.find(id).orElseThrow().state()).isEqualTo(Migration.State.DRAFT);
+        mvc.perform(post("/migrations/" + id + "/delete").with(ADMIN).with(csrf())).andExpect(redirectedUrl("/migrations"));
+        assertThat(migrations.find(id)).isEmpty();
+    }
+
+    @Test
+    @Order(13)
+    void aDryRunLeftRunningByARestartIsMarkedFailed() {
+        jdbc.sql("INSERT INTO dry_run_reports (source_name, selection_yaml, options_json, status) VALUES ('a', 'x', '{}', 'RUNNING')").update();
+
+        assertThat(reports.failInterrupted()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT status FROM dry_run_reports WHERE source_name = 'a'").query(String.class).single()).isEqualTo("FAILED");
+    }
+
+    @Test
+    @Order(14)
+    void settingsAreSavedValidatedAndUsed() throws Exception {
+        mvc.perform(get("/settings").with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("neo4j:5.26.29-community")));
+
+        mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "50").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("at least 100")));
+        mvc.perform(settingsForm("LOCAL", "", "org_id", "500").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("installation")));
+        assertThat(settings.get().batchSize()).isEqualTo(10_000);
+
+        mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "company_id", "500").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("message", "Settings saved"));
+        assertThat(settings.get().orgProperty()).isEqualTo("company_id");
+        assertThat(settings.get().batchSize()).isEqualTo(500);
+
+        // the new default shows up where a selection is typed
+        mvc.perform(get("/migrations/new").with(ADMIN)).andExpect(content().string(containsString("company_id")));
+        mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000").with(ADMIN).with(csrf()));
+        assertThat(settings.get().orgProperty()).isEqualTo("org_id");
+    }
+
+    @Test
+    @Order(15)
+    void passwordChangeNeedsTheCurrentPassword() throws Exception {
+        String hash = users.loadUserByUsername("admin").getPassword();
+
+        for (var bad : List.of(new String[] {"wrong", "new-password-1", "new-password-1", "current password is wrong"},
+                new String[] {"correct horse battery", "short", "short", "at least 8"},
+                new String[] {"correct horse battery", "new-password-1", "different-1", "different"})) {
+            mvc.perform(post("/settings/password").param("current", bad[0]).param("password", bad[1]).param("confirm", bad[2])
+                    .with(ADMIN).with(csrf())).andExpect(flash().attribute("error", containsString(bad[3])));
+        }
+        assertThat(users.loadUserByUsername("admin").getPassword()).isEqualTo(hash);
+
+        mvc.perform(post("/settings/password").param("current", "correct horse battery").param("password", "new-password-1")
+                .param("confirm", "new-password-1").with(ADMIN).with(csrf())).andExpect(flash().attribute("message", "Password changed"));
+        mvc.perform(post("/login").param("username", "admin").param("password", "new-password-1").with(csrf()))
+                .andExpect(redirectedUrl("/"));
+        mvc.perform(post("/login").param("username", "admin").param("password", "correct horse battery").with(csrf()))
+                .andExpect(redirectedUrl("/login?error"));
+    }
+
+    @Test
+    @Order(16)
+    void everyActionIsInTheAuditLog() throws Exception {
+        mvc.perform(get("/logs").param("tab", "audit").with(ADMIN)).andExpect(status().isOk());
+        assertThat(jdbc.sql("SELECT action FROM audit_log").query(String.class).list()).contains(
+                "endpoint_add", "schema_view", "migration_create", "plan_start", "plan_done", "dry_run_start", "dry_run_done",
+                "settings_save", "password_change", "login", "login_failed");
+    }
+
+    // ---- helpers ----
+
+    private void addEndpoint(String name, String kind, String location, String user, String password) throws Exception {
+        mvc.perform(post("/endpoints").param("name", name).param("kind", kind).param("location", location)
+                .param("username", user).param("password", password).with(ADMIN).with(csrf()))
+                .andExpect(redirectedUrl("/endpoints"));
+    }
+
+    private long endpointId(String name) {
+        return jdbc.sql("SELECT id FROM endpoints WHERE name = ?").param(name).query(Long.class).single();
+    }
+
+    private long createMigration(String name, String source, String target, Map<String, String> selection) throws Exception {
+        var request = post("/migrations").param("name", name).param("source", String.valueOf(endpointId(source))).with(ADMIN).with(csrf());
+        if (target != null) {
+            request = request.param("target", String.valueOf(endpointId(target)));
+        }
+        for (var e : selection.entrySet()) {
+            request = request.param(e.getKey(), e.getValue());
+        }
+        String location = mvc.perform(request).andExpect(status().is3xxRedirection()).andReturn().getResponse().getRedirectedUrl();
+        return Long.parseLong(location.substring(location.lastIndexOf('/') + 1));
+    }
+
+    private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder settingsForm(
+            String runner, String image, String orgProperty, String batchSize) {
+        return post("/settings").param("runner", runner).param("dockerImage", image).param("neo4jHome", "")
+                .param("workDir", System.getProperty("java.io.tmpdir")).param("tempHeap", "512m").param("tempPageCache", "128m")
+                .param("startTimeoutMinutes", "10").param("orgProperty", orgProperty).param("batchSize", batchSize)
+                .param("sampleSize", "20").param("analyseRelationships", "true");
+    }
+
+    private Migration awaitState(long id, Migration.State wanted) throws InterruptedException {
+        return awaitState(id, wanted, Duration.ofSeconds(90));
+    }
+
+    private Migration awaitState(long id, Migration.State wanted, Duration timeout) throws InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            Migration m = migrations.find(id).orElseThrow();
+            if (m.state() == wanted) {
+                return m;
+            }
+            if (!m.state().busy() && m.lastError() != null) {
+                throw new AssertionError("Migration " + id + " failed: " + m.lastError());
+            }
+            Thread.sleep(200);
+        }
+        throw new AssertionError("Migration " + id + " did not reach " + wanted + " in " + timeout.toSeconds() + " s");
+    }
+}

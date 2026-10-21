@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page('Databases', ~{::main}, 'endpoints')}">
+<body>
+<main>
+    <div class="head"><div><h1>Databases</h1><p class="sub">The places a migration reads from or goes to. The tool never writes to a database on this page.</p></div></div>
+
+    <div class="card" th:if="${endpoints.isEmpty()}"><div class="empty"><h2>No databases yet</h2><p>Add the backup and the live database below.</p></div></div>
+    <div class="card" th:if="${!endpoints.isEmpty()}">
+        <table>
+            <thead><tr><th>Name</th><th>Kind</th><th>Location</th><th>Database</th><th></th></tr></thead>
+            <tbody>
+            <tr th:each="e : ${endpoints}">
+                <td><b th:text="${e.name()}"></b></td>
+                <td><span class="badge" th:text="${e.kind().label()}"></span></td>
+                <td class="mono" th:text="${e.location()}"></td>
+                <td th:text="${e.database()}"></td>
+                <td><div class="actions">
+                    <a class="btn secondary" th:href="@{/endpoints/{id}/schema(id=${e.id()})}">Schema</a>
+                    <form class="inline" th:action="@{/endpoints/{id}/check(id=${e.id()})}" method="post"><button class="secondary" type="submit">Check</button></form>
+                    <form class="inline" th:action="@{/endpoints/{id}/delete(id=${e.id()})}" method="post"><button class="danger" type="submit">Delete</button></form>
+                </div></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <form class="card" th:action="@{/endpoints}" method="post">
+        <h2>Add a database</h2>
+        <label>What is it?</label>
+        <div>
+            <label class="check"><input type="radio" name="kind" value="LIVE" checked> A running server <span class="pill">read over Bolt, no copy needed</span></label>
+            <label class="check"><input type="radio" name="kind" value="DUMP"> A dump file <span class="pill">loaded into a temporary server when used</span></label>
+            <label class="check"><input type="radio" name="kind" value="STOPPED"> The data directory of a stopped server <span class="pill">dumped first, then loaded</span></label>
+        </div>
+        <div class="row">
+            <div><label for="name">Name</label><input id="name" name="name" type="text" placeholder="backup"></div>
+            <div><label for="location" id="locationLabel">Bolt URI</label><input id="location" name="location" type="text" placeholder="bolt://localhost:7687">
+                <p class="hint" id="locationHint">For a server on another machine use its address, for example bolt://10.0.0.5:7687.</p></div>
+            <div><label for="database">Database name</label><input id="database" name="database" type="text" value="neo4j">
+                <p class="hint">The name the data has inside Neo4j. Community servers have one: usually <span class="mono">neo4j</span>.</p></div>
+        </div>
+        <div class="row" id="credentials">
+            <div><label for="username">User (empty = no authentication)</label><input id="username" name="username" type="text" autocomplete="off"></div>
+            <div><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="new-password">
+                <p class="hint">Stored encrypted. Only used to connect.</p></div>
+        </div>
+        <p><button type="submit">Save</button></p>
+    </form>
+    <script>
+        (function () {
+            var text = {
+                LIVE: ['Bolt URI', 'bolt://localhost:7687', 'For a server on another machine use its address, for example bolt://10.0.0.5:7687.'],
+                DUMP: ['Path to the dump file', '/backups/neo4j.dump', 'A path on the machine the dashboard runs on. Use the Neo4j version that wrote the dump (see Settings).'],
+                STOPPED: ['Path to the data directory', '/var/lib/neo4j/data', 'The folder that contains databases/ and transactions/. The server must be stopped.']
+            };
+            function update() {
+                var kind = document.querySelector('input[name=kind]:checked').value;
+                document.getElementById('locationLabel').textContent = text[kind][0];
+                document.getElementById('location').placeholder = text[kind][1];
+                document.getElementById('locationHint').textContent = text[kind][2];
+                document.getElementById('credentials').style.display = kind === 'LIVE' ? '' : 'none';
+            }
+            document.querySelectorAll('input[name=kind]').forEach(function (r) { r.addEventListener('change', update); });
+            update();
+        })();
+    </script>
+</main>
+</body>
+</html>

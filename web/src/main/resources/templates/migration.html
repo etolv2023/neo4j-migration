@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page(${migration.name()}, ~{::main}, 'migrations')}">
+<body>
+<main>
+    <div class="head">
+        <div>
+            <h1 th:text="${migration.name()}"></h1>
+            <p class="sub"><span th:text="${migration.isSplit()} ? 'Split' : 'Merge'"></span> ·
+                <b th:text="${migration.sourceName()}"></b> → <b th:text="${migration.targetName() != null ? migration.targetName() : 'a new database'}"></b>
+                · <span th:class="${'badge ' + migration.state().name()}" th:text="${migration.state().label()}"></span></p>
+        </div>
+        <form th:action="@{/migrations/{id}/delete(id=${migration.id()})}" method="post" th:unless="${migration.state().busy()}">
+            <button class="danger" type="submit">Delete</button></form>
+    </div>
+
+    <div class="stepper">
+        <div class="s done"><b>1</b><span>From, To, selection</span></div>
+        <div th:class="${'s ' + (plan != null ? 'done' : 'now')}"><b>2</b><span>Plan</span></div>
+        <div th:class="${'s ' + (dryRun != null ? 'done' : (plan != null ? 'now' : 'off'))}"><b>3</b><span>Dry run</span></div>
+        <div class="s off"><b>4</b><span>Run</span></div>
+    </div>
+
+    <div class="flash work" th:if="${migration.state().busy()}">
+        <b th:text="${migration.state().label()}"></b> —
+        <span th:if="${progress != null}" th:text="${progress.phase() + (progress.total() >= 0 ? ': ' + @fmt.number(progress.done()) + ' / ' + @fmt.number(progress.total()) : '')}"></span>
+        <span th:if="${progress == null}">starting</span>. This page refreshes by itself.
+    </div>
+    <div class="flash err" th:if="${migration.lastError() != null}">
+        <b>The last step failed.</b> <span th:text="${migration.lastError()}"></span>
+    </div>
+
+    <div class="card">
+        <h2>Selection</h2>
+        <pre th:text="${migration.selectionYaml()}"></pre>
+    </div>
+
+    <!-- Plan -->
+    <div class="card">
+        <div class="head" style="margin-bottom:8px">
+            <h2>Plan</h2>
+            <form th:action="@{/migrations/{id}/plan(id=${migration.id()})}" method="post">
+                <button type="submit" th:disabled="${migration.state().busy()}" th:text="${plan == null} ? 'Make the plan' : 'Make it again'"></button></form>
+        </div>
+        <p class="sub" th:if="${plan == null}">Counts what is in both databases and lists the steps. Dumps and stopped data directories are loaded into a temporary server first. Nothing is changed.</p>
+        <th:block th:if="${plan != null}">
+            <div class="stats">
+                <div class="stat"><div class="l">Selected nodes</div><div class="big" th:text="${@fmt.number(plan.selectedNodes())}"></div></div>
+                <div class="stat"><div class="l">Source nodes</div><div class="big" th:text="${@fmt.number(plan.from().nodes())}"></div></div>
+                <div class="stat" th:if="${plan.to() != null}"><div class="l">Target nodes</div><div class="big" th:text="${@fmt.number(plan.to().nodes())}"></div></div>
+                <div class="stat"><div class="l">Dry run, roughly</div><div class="big" th:text="${@fmt.duration(plan.estimatedDryRunSeconds())}"></div></div>
+            </div>
+            <div class="flash warn" style="margin-top:14px" th:each="w : ${plan.warnings()}" th:text="${w}"></div>
+            <table class="kv" style="margin-top:10px">
+                <thead><tr><th></th><th>From</th><th th:if="${plan.to() != null}">To</th></tr></thead>
+                <tbody>
+                <tr><td>Name</td><td th:text="${plan.from().name()}"></td><td th:if="${plan.to() != null}" th:text="${plan.to().name()}"></td></tr>
+                <tr><td>Kind</td><td th:text="${plan.from().kind()}"></td><td th:if="${plan.to() != null}" th:text="${plan.to().kind()}"></td></tr>
+                <tr><td>Neo4j</td><td th:text="${plan.from().serverVersion() + ' · ' + plan.from().database()}"></td><td th:if="${plan.to() != null}" th:text="${plan.to().serverVersion() + ' · ' + plan.to().database()}"></td></tr>
+                <tr><td>Relationships</td><td th:text="${@fmt.number(plan.from().relationships())}"></td><td th:if="${plan.to() != null}" th:text="${@fmt.number(plan.to().relationships())}"></td></tr>
+                <tr><td>Indexes · constraints</td><td th:text="${plan.from().indexes() + ' · ' + plan.from().constraints()}"></td><td th:if="${plan.to() != null}" th:text="${plan.to().indexes() + ' · ' + plan.to().constraints()}"></td></tr>
+                </tbody>
+            </table>
+            <h2 style="margin-top:20px">Steps</h2>
+            <ol class="steps">
+                <li th:each="s : ${plan.steps()}">
+                    <span class="n" th:text="${s.number()}"></span>
+                    <div><div th:text="${s.title()}"></div><div class="d" th:text="${s.detail()}"></div></div>
+                    <span th:class="${s.available() ? 'badge ok' : 'badge'}" th:text="${s.available() ? 'available' : 'not available yet'}"></span>
+                </li>
+            </ol>
+            <p class="hint">Plan made <span th:text="${@fmt.time(T(java.time.Instant).parse(plan.createdAt()))}"></span>. The time is a rough estimate from a test run, not a promise.</p>
+        </th:block>
+    </div>
+
+    <!-- Dry run -->
+    <div class="card">
+        <div class="head" style="margin-bottom:8px">
+            <h2>Dry run</h2>
+            <form th:action="@{/migrations/{id}/dry-run(id=${migration.id()})}" method="post">
+                <button type="submit" th:disabled="${plan == null || migration.state().busy()}" th:text="${dryRun == null} ? 'Run the dry run' : 'Run it again'"></button></form>
+        </div>
+        <p class="sub" th:if="${plan == null}">Make the plan first.</p>
+        <p class="sub" th:if="${plan != null && dryRun == null}">Compares the selected nodes with the target, id by id, and checks their relationships. Nothing is changed.</p>
+        <th:block th:if="${dryRun != null}">
+            <p><span th:class="${'badge ' + dryRun.gate()}" th:text="${dryRun.gate()}"></span>
+                <span class="muted" th:text="${' · finished ' + @fmt.time(dryRun.finishedAt())}"></span></p>
+            <div class="stats">
+                <div class="stat"><div class="l">Selected</div><div class="big" th:text="${@fmt.number(dryRun.selectedNodes())}"></div></div>
+                <div class="stat" th:if="${dryRun.missingNodes() != null}"><div class="l">Missing on the target</div><div class="big" th:text="${@fmt.number(dryRun.missingNodes())}"></div></div>
+                <div class="stat" th:if="${dryRun.sameNodes() != null}"><div class="l">Already there</div><div class="big" th:text="${@fmt.number(dryRun.sameNodes())}"></div></div>
+                <div class="stat" th:if="${dryRun.conflictNodes() != null}"><div class="l">Id used by another node</div><div class="big" th:text="${@fmt.number(dryRun.conflictNodes())}"></div></div>
+            </div>
+            <p><a th:href="@{/dry-runs/{id}(id=${dryRun.id()})}">Open the full report</a></p>
+        </th:block>
+    </div>
+
+    <!-- Run -->
+    <div class="card muted-card">
+        <div class="head" style="margin-bottom:8px">
+            <h2>Run</h2>
+            <button type="button" disabled>Run</button>
+        </div>
+        <p class="sub" style="margin:0">The run itself is not part of this version. It will stay disabled until a dry run on this plan is finished and not blocked,
+            and a backup of the target has been taken.</p>
+    </div>
+
+    <!-- Log -->
+    <div class="card">
+        <h2>Log</h2>
+        <p class="muted" th:if="${log.isEmpty()}">Nothing has run yet.</p>
+        <div class="log" th:if="${!log.isEmpty()}"><div th:each="l : ${log}" th:class="${l.level()}"><span class="t" th:text="${@fmt.time(l.at())}"></span><span th:text="${l.message()}"></span></div></div>
+    </div>
+</main>
+</body>
+</html>

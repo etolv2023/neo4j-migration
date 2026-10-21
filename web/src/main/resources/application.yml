@@ -1,0 +1,25 @@
+server:
+  address: 127.0.0.1   # the dashboard is meant for the machine it runs on; put a reverse proxy in front to change that
+  port: 8080
+
+spring:
+  application:
+    name: neo4j-migration-dashboard
+  datasource:
+    url: ${TOOL_DB_URL:jdbc:mysql://localhost:3306/neo4j_tool}
+    username: ${TOOL_DB_USER:neo4j_tool}
+    password: ${TOOL_DB_PASSWORD:}
+  flyway:
+    enabled: true
+  thymeleaf:
+    cache: true
+  mvc:
+    problemdetails:
+      enabled: false
+
+tool:
+  # Both must be provided through the environment; the application refuses to start without them.
+  secret: ${TOOL_SECRET:}                 # encrypts stored Neo4j passwords, at least 16 characters
+  admin:
+    user: ${TOOL_ADMIN_USER:admin}
+    password: ${TOOL_ADMIN_PASSWORD:}

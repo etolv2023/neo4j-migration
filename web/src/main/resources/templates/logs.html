@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page('Logs', ~{::main}, 'logs')}">
+<body>
+<main>
+    <div class="head"><div><h1>Logs</h1><p class="sub">The latest 500 entries of each.</p></div></div>
+    <div class="tabs">
+        <a th:href="@{/logs(tab='jobs')}" th:classappend="${tab == 'jobs'} ? 'on'">Jobs</a>
+        <a th:href="@{/logs(tab='audit')}" th:classappend="${tab == 'audit'} ? 'on'">What people did</a>
+        <a th:href="@{/logs(tab='logins')}" th:classappend="${tab == 'logins'} ? 'on'">Sign-ins</a>
+    </div>
+    <div class="card" th:if="${tab == 'jobs'}">
+        <p class="muted" th:if="${lines.isEmpty()}">No job has run yet.</p>
+        <table th:if="${!lines.isEmpty()}">
+            <thead><tr><th>When</th><th>Migration</th><th>Message</th></tr></thead>
+            <tbody><tr th:each="l : ${lines}">
+                <td class="muted" th:text="${@fmt.time(l.at())}"></td>
+                <td><a th:href="@{/migrations/{id}(id=${#strings.substringAfter(l.scope(), ':')})}" th:text="${'#' + #strings.substringAfter(l.scope(), ':')}"></a></td>
+                <td class="mono" th:style="${l.level() == 'ERROR'} ? 'color:var(--bad)'" th:text="${l.message()}"></td></tr></tbody>
+        </table>
+    </div>
+    <div class="card" th:if="${tab != 'jobs'}">
+        <p class="muted" th:if="${entries.isEmpty()}">Nothing yet.</p>
+        <table th:if="${!entries.isEmpty()}">
+            <thead><tr><th>When</th><th>Who</th><th>What</th><th>Details</th></tr></thead>
+            <tbody><tr th:each="e : ${entries}">
+                <td class="muted" th:text="${@fmt.time(e.at())}"></td><td th:text="${e.actor()}"></td>
+                <td><span th:class="${e.action() == 'login_failed' ? 'badge bad' : 'badge'}" th:text="${e.action()}"></span></td>
+                <td th:text="${e.detail()}"></td></tr></tbody>
+        </table>
+    </div>
+</main>
+</body>
+</html>

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page('Dry run report', ~{::main}, 'migrations')}">
+<body>
+<main>
+    <div class="head">
+        <div>
+            <h1>Dry run report <span class="muted" th:text="${'#' + row.id()}"></span></h1>
+            <p class="sub"><b th:text="${row.sourceName()}"></b> → <b th:text="${row.targetName() != null ? row.targetName() : 'a new database'}"></b>
+                <span th:if="${row.migrationId() != null}"> · <a th:href="@{/migrations/{id}(id=${row.migrationId()})}">back to the migration</a></span></p>
+        </div>
+        <a class="btn secondary" th:if="${report != null}" th:href="@{/dry-runs/{id}/report.json(id=${row.id()})}">Download JSON</a>
+    </div>
+
+    <div class="flash err" th:if="${row.status().name() == 'FAILED'}"><b>This dry run failed.</b> <span th:text="${row.error()}"></span></div>
+
+    <th:block th:if="${report != null}">
+        <div th:class="${'banner ' + report.gate().name()}">
+            <span th:text="${report.gate().name() == 'CLEAR' ? 'Clear: nothing stands in the way.' : (report.gate().name() == 'WARN' ? 'Warnings: read them before going on.' : 'Blocked: some selected ids are used by different nodes.')}"></span>
+            <ul th:if="${!report.gateReasons().isEmpty()}"><li th:each="reason : ${report.gateReasons()}" th:text="${reason}"></li></ul>
+        </div>
+        <p class="muted">Source Neo4j <span th:text="${report.sourceVersion()}"></span> (<span th:text="${report.sourceDatabase()}"></span>)
+            <span th:if="${report.targetVersion() != null}"> · target Neo4j <span th:text="${report.targetVersion()}"></span> (<span th:text="${report.targetDatabase()}"></span>)</span>
+            · took <span th:text="${@fmt.duration(report.durationMillis() / 1000)}"></span></p>
+
+        <div class="card">
+            <h2>Selection</h2>
+            <div class="stats">
+                <div class="stat"><div class="l">Selected nodes</div><div class="big" th:text="${@fmt.number(report.selectedNodes())}"></div></div>
+            </div>
+            <p class="flash err" style="margin-top:12px" th:if="${report.selectsEverything()}">The selection has no filter, so it is every node.</p>
+            <pre th:text="${row.selectionYaml()}" style="margin:12px 0"></pre>
+            <table><thead><tr><th>Label</th><th class="num">Nodes</th></tr></thead>
+                <tbody><tr th:each="l : ${report.selectedByLabel()}"><td th:text="${l.label()}"></td><td class="num" th:text="${@fmt.number(l.count())}"></td></tr></tbody></table>
+        </div>
+
+        <div class="card" th:if="${report.nodes() != null}">
+            <h2>Against the target</h2>
+            <div class="stats">
+                <div class="stat"><div class="l">Missing — would be restored with their ids</div><div class="big" th:text="${@fmt.number(report.nodes().missing())}"></div></div>
+                <div class="stat"><div class="l">Same node already there</div><div class="big" th:text="${@fmt.number(report.nodes().same())}"></div></div>
+                <div class="stat"><div class="l">Id used by a different node</div>
+                    <div class="big" th:style="${report.nodes().conflict() > 0} ? 'color:var(--bad)'" th:text="${@fmt.number(report.nodes().conflict())}"></div></div>
+            </div>
+            <th:block th:if="${report.nodes().missingRunCount() > 0}">
+                <h2 style="margin-top:18px">Missing ids</h2>
+                <p>They form <b th:text="${@fmt.number(report.nodes().missingRunCount())}"></b> runs of consecutive ids. The largest:</p>
+                <table><thead><tr><th>From</th><th>To</th><th class="num">Ids</th></tr></thead>
+                    <tbody><tr th:each="run : ${report.nodes().largestMissingRuns()}"><td th:text="${run.fromId()}"></td><td th:text="${run.toId()}"></td><td class="num" th:text="${@fmt.number(run.length())}"></td></tr></tbody></table>
+            </th:block>
+            <th:block th:if="${!report.nodes().conflictSamples().isEmpty()}">
+                <h2 style="margin-top:18px">Ids that now hold a different node</h2>
+                <table><thead><tr><th>Id</th><th>In the source</th><th>On the target</th></tr></thead>
+                    <tbody><tr th:each="c : ${report.nodes().conflictSamples()}"><td th:text="${c.id()}"></td>
+                        <td th:text="${c.sourceLabels() + ' · org ' + c.sourceOrg()}"></td><td th:text="${c.targetLabels() + ' · org ' + c.targetOrg()}"></td></tr></tbody></table>
+            </th:block>
+            <th:block th:if="${!report.nodes().missingSamples().isEmpty()}">
+                <h2 style="margin-top:18px">Examples of missing nodes</h2>
+                <table><thead><tr><th>Id</th><th>Labels</th><th>Org</th></tr></thead>
+                    <tbody><tr th:each="s : ${report.nodes().missingSamples()}"><td th:text="${s.id()}"></td><td th:text="${s.labels()}"></td><td th:text="${s.org()}"></td></tr></tbody></table>
+            </th:block>
+        </div>
+
+        <div class="card" th:if="${report.relationships() != null}">
+            <h2>Relationships <span class="pill" th:text="${report.relationships().scope()}"></span></h2>
+            <p><b th:text="${@fmt.number(report.relationships().total())}"></b> relationships touch these nodes. Relationship ids will be new after a restore; node ids are kept.</p>
+            <table><thead><tr><th>Type</th><th class="num">Internal</th><th class="num">Resolved</th><th class="num">Conflict</th><th class="num">Dangling</th><th class="num">Outside selection</th></tr></thead>
+                <tbody><tr th:each="t : ${report.relationships().byType()}"><td th:text="${t.type()}"></td>
+                    <td class="num" th:text="${@fmt.number(t.internal())}"></td><td class="num" th:text="${@fmt.number(t.resolved())}"></td>
+                    <td class="num" th:text="${@fmt.number(t.conflict())}"></td><td class="num" th:text="${@fmt.number(t.dangling())}"></td>
+                    <td class="num" th:text="${@fmt.number(t.boundary())}"></td></tr></tbody></table>
+            <p class="hint"><b>Internal</b>: both ends are restored together. <b>Resolved</b>: the other end is already on the target. <b>Conflict</b>: the other end's id holds a different node.
+                <b>Dangling</b>: the other end does not exist on the target. <b>Outside selection</b>: there is no target and the other end is not selected.</p>
+        </div>
+    </th:block>
+</main>
+</body>
+</html>

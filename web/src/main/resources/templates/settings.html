@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page('Settings', ~{::main}, 'settings')}">
+<body>
+<main>
+    <div class="head"><div><h1>Settings</h1><p class="sub">Choices that different teams make differently.</p></div></div>
+    <form class="card" th:action="@{/settings}" method="post">
+        <h2>Temporary servers</h2>
+        <p class="sub">A dump, or the data directory of a stopped server, is loaded into a throw-away Neo4j that is deleted when the job ends.</p>
+        <label for="runner">Run it with</label>
+        <select id="runner" name="runner">
+            <option th:each="r : ${runners}" th:value="${r}" th:selected="${r == settings.runner()}"
+                    th:text="${r.name() == 'DOCKER' ? 'Docker (a Neo4j image)' : 'A Neo4j installation on this machine'}"></option>
+        </select>
+        <div class="row">
+            <div><label for="dockerImage">Docker image</label><input id="dockerImage" name="dockerImage" type="text" th:value="${settings.dockerImage()}">
+                <p class="hint">Use the version that wrote your dumps, for example <span class="mono">neo4j:5.26.29-community</span>.</p></div>
+            <div><label for="neo4jHome">Neo4j installation directory</label><input id="neo4jHome" name="neo4jHome" type="text" th:value="${settings.neo4jHome()}" placeholder="/opt/neo4j">
+                <p class="hint">Only for “installation on this machine”. Its own configuration and logs are not used or changed.</p></div>
+        </div>
+        <div class="row">
+            <div><label for="workDir">Work directory</label><input id="workDir" name="workDir" type="text" th:value="${settings.workDir()}">
+                <p class="hint">Needs room for a full copy of each dump that is loaded.</p></div>
+            <div><label for="startTimeoutMinutes">Wait for a temporary server up to (minutes)</label><input id="startTimeoutMinutes" name="startTimeoutMinutes" type="number" min="1" th:value="${settings.startTimeoutMinutes()}"></div>
+        </div>
+        <div class="row">
+            <div><label for="tempHeap">Memory for it: heap</label><input id="tempHeap" name="tempHeap" type="text" th:value="${settings.tempHeap()}"></div>
+            <div><label for="tempPageCache">Memory for it: page cache</label><input id="tempPageCache" name="tempPageCache" type="text" th:value="${settings.tempPageCache()}"></div>
+        </div>
+        <h2 style="margin-top:26px">Defaults for dry runs</h2>
+        <div class="row">
+            <div><label for="orgProperty">Organisation property</label><input id="orgProperty" name="orgProperty" type="text" th:value="${settings.orgProperty()}">
+                <p class="hint">The node property that holds the company id.</p></div>
+            <div><label for="batchSize">Ids per query</label><input id="batchSize" name="batchSize" type="number" min="100" th:value="${settings.batchSize()}">
+                <p class="hint">Bigger is faster until the server gets slow. At least 100.</p></div>
+            <div><label for="sampleSize">Examples per report section</label><input id="sampleSize" name="sampleSize" type="number" min="0" th:value="${settings.sampleSize()}"></div>
+        </div>
+        <label class="check"><input type="checkbox" name="analyseRelationships" value="true" th:checked="${settings.analyseRelationships()}"> Check relationships in the dry run</label>
+        <p class="hint">Switch it off to make a dry run faster when you only care about nodes.</p>
+        <p><button type="submit">Save settings</button></p>
+    </form>
+
+    <form class="card" th:action="@{/settings/password}" method="post">
+        <h2>Change my password</h2>
+        <div class="row">
+            <div><label for="current">Current password</label><input id="current" name="current" type="password" autocomplete="current-password"></div>
+            <div><label for="password">New password</label><input id="password" name="password" type="password" autocomplete="new-password"></div>
+            <div><label for="confirm">New password again</label><input id="confirm" name="confirm" type="password" autocomplete="new-password"></div>
+        </div>
+        <p><button type="submit">Change password</button></p>
+    </form>
+</main>
+</body>
+</html>

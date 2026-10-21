@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page('New migration', ~{::main}, 'migrations')}">
+<body>
+<main>
+    <div class="head"><div><h1>New migration</h1><p class="sub">Step 1 of 4: where the data comes from, where it goes, and which nodes.</p></div></div>
+    <div class="card muted-card" th:if="${endpoints.isEmpty()}">
+        <div class="empty"><h2>No databases yet</h2><p>Add at least one under <a th:href="@{/endpoints}">Databases</a> first.</p></div>
+    </div>
+    <form th:if="${!endpoints.isEmpty()}" th:action="@{/migrations}" method="post">
+        <div class="card">
+            <h2>From and To</h2>
+            <label for="name">Name</label>
+            <input id="name" name="name" type="text" th:value="${name}" placeholder="Restore org 12 after the deletion">
+            <div class="row">
+                <div>
+                    <label for="source">From — where the data comes from</label>
+                    <select id="source" name="source">
+                        <option th:each="e : ${endpoints}" th:value="${e.id()}" th:selected="${e.id() == sourceId}"
+                                th:text="${e.name() + ' · ' + e.kind().label()}"></option>
+                    </select>
+                    <p class="hint">Usually the backup. A dump is only read; the tool never changes it.</p>
+                </div>
+                <div>
+                    <label for="target">To — where it goes</label>
+                    <select id="target" name="target">
+                        <option value="">A new database (split)</option>
+                        <option th:each="e : ${endpoints}" th:value="${e.id()}" th:selected="${e.id() == targetId}"
+                                th:text="${e.name() + ' · ' + e.kind().label()}"></option>
+                    </select>
+                    <p class="hint">Choose the live database to merge into it, or a new database to split the selection out.</p>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>What to move</h2>
+            <p class="sub">Fill in any of these. A node must match <b>all</b> the fields you fill in; inside one field, <b>any</b> of the values.</p>
+            <div class="row">
+                <div><label for="orgIds">Companies (organisation ids)</label>
+                    <input id="orgIds" name="orgIds" type="text" th:value="${selection.orgIds()}" placeholder="12, 45">
+                    <p class="hint">One or more. Matches the property <span class="mono" th:text="${defaultOrgProperty}"></span> (change it in Settings).</p></div>
+                <div><label for="labels">Labels</label>
+                    <input id="labels" name="labels" type="text" th:value="${selection.labels()}" placeholder="Booking, Service">
+                    <p class="hint">A node needs at least one of them.</p></div>
+            </div>
+            <div class="row">
+                <div><label for="ids">Node ids</label>
+                    <input id="ids" name="ids" type="text" th:value="${selection.ids()}" placeholder="1001, 1002">
+                    <p class="hint">Exact <span class="mono">id(n)</span> values.</p></div>
+                <div><label for="idRanges">Id ranges</label>
+                    <input id="idRanges" name="idRanges" type="text" th:value="${selection.idRanges()}" placeholder="5000-9000, 12000-12500">
+                    <p class="hint">Inclusive. Ids and ranges together count as one condition.</p></div>
+            </div>
+            <div class="row">
+                <div><label for="excludeIds">Never move these ids</label>
+                    <input id="excludeIds" name="excludeIds" type="text" th:value="${selection.excludeIds()}" placeholder="77, 78">
+                    <p class="hint">Always wins over everything above.</p></div>
+                <div><label for="orgProperty">Organisation property (optional)</label>
+                    <input id="orgProperty" name="orgProperty" type="text" th:value="${selection.orgProperty()}" th:placeholder="${defaultOrgProperty}">
+                    <p class="hint">Leave empty for the default.</p></div>
+            </div>
+            <p class="hint">Leaving all of them empty selects <b>every node</b>. The plan will warn you.</p>
+        </div>
+        <div class="actions"><button type="submit">Create migration</button><a class="btn secondary" th:href="@{/migrations}">Cancel</a></div>
+    </form>
+</main>
+</body>
+</html>

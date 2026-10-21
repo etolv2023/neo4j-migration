@@ -1,0 +1,9 @@
+target/
+*.iml
+.idea/
+.vscode/
+*.log
+*.dump
+.env
+benchmark/data/
+benchmark/out/

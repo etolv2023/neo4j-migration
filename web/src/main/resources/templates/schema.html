@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page('Schema', ~{::main}, 'endpoints')}">
+<body>
+<main>
+    <div class="head"><div><h1>Schema of <span th:text="${endpoint.name()}"></span></h1>
+        <p class="sub"><span th:text="${endpoint.kind().label()}"></span> · <span class="mono" th:text="${endpoint.location()}"></span></p></div>
+        <a class="btn secondary" th:href="@{/endpoints}">Back</a></div>
+    <p class="flash work" th:if="${endpoint.kind().name() != 'LIVE'}">This database is not served by a running server, so a temporary one was started to read it. For a big dump that takes a while.</p>
+    <form class="card" method="get">
+        <div class="row">
+            <div><label for="orgProperty">Organisation property</label><input id="orgProperty" name="orgProperty" type="text" th:value="${orgProperty}"></div>
+            <div><label class="check" style="margin-top:34px"><input type="checkbox" name="orgBreakdown" value="true" th:checked="${orgBreakdown}"> Count per organisation</label>
+                <p class="hint">Scans every node. Slow on a big database.</p></div>
+        </div>
+        <p><button type="submit">Reload</button></p>
+    </form>
+    <th:block th:if="${schema != null}">
+        <div class="card">
+            <div class="stats">
+                <div class="stat"><div class="l">Neo4j</div><div class="big" style="font-size:20px" th:text="${schema.serverVersion()}"></div></div>
+                <div class="stat"><div class="l">Nodes</div><div class="big" th:text="${@fmt.number(schema.totalNodes())}"></div></div>
+                <div class="stat"><div class="l">Relationships</div><div class="big" th:text="${@fmt.number(schema.totalRelationships())}"></div></div>
+            </div>
+        </div>
+        <div class="card"><h2>Labels</h2>
+            <table><thead><tr><th>Label</th><th class="num">Nodes</th><th>Per organisation</th></tr></thead>
+                <tbody><tr th:each="l : ${schema.labels()}"><td th:text="${l.name()}"></td><td class="num" th:text="${@fmt.number(l.count())}"></td>
+                    <td class="muted"><span th:each="o : ${l.byOrg()}" th:text="${(o.org() != null ? o.org() : 'none') + ': ' + @fmt.number(o.count()) + '   '}"></span></td></tr></tbody></table></div>
+        <div class="card"><h2>Relationship types</h2>
+            <table><tbody><tr th:each="t : ${schema.relationshipTypes()}"><td th:text="${t.name()}"></td><td class="num" th:text="${@fmt.number(t.count())}"></td></tr></tbody></table></div>
+        <div class="card"><h2>Indexes and constraints</h2>
+            <table><thead><tr><th>Name</th><th>Kind</th><th>On</th><th>State</th></tr></thead><tbody>
+                <tr th:each="i : ${schema.indexes()}"><td th:text="${i.name()}"></td><td th:text="${i.type()}"></td><td th:text="${i.labelsOrTypes() + ' ' + i.properties()}"></td><td th:text="${i.state()}"></td></tr>
+                <tr th:each="c : ${schema.constraints()}"><td th:text="${c.name()}"></td><td th:text="${c.type()}"></td><td th:text="${c.labelsOrTypes() + ' ' + c.properties()}"></td><td>constraint</td></tr>
+            </tbody></table></div>
+    </th:block>
+</main>
+</body>
+</html>

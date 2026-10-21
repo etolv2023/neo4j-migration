@@ -1,0 +1,17 @@
+# MySQL for the dashboard's own data only (users, saved databases, plans, reports, logs). No graph data is stored there.
+# Change the passwords before using this anywhere but your own machine.
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: neo4j_tool
+      MYSQL_USER: neo4j_tool
+      MYSQL_PASSWORD: neo4j_tool_password
+      MYSQL_ROOT_PASSWORD: change-me-root
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+volumes:
+  mysql-data:

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:fragment="page(title, content, active)" lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="refresh" th:if="${refresh != null}" th:content="${refresh}">
+    <title th:text="${title} + ' · Neo4j Migration'">Neo4j Migration</title>
+    <link rel="stylesheet" th:href="@{/app.css}">
+</head>
+<body>
+<div class="shell">
+    <aside class="side">
+        <div class="brand">Neo4j Migration<small>ids kept · read-only so far</small></div>
+        <nav>
+            <a th:href="@{/migrations}" th:classappend="${active == 'migrations'} ? 'active'">Migrations</a>
+            <a th:href="@{/endpoints}" th:classappend="${active == 'endpoints'} ? 'active'">Databases</a>
+            <a th:href="@{/logs}" th:classappend="${active == 'logs'} ? 'active'">Logs</a>
+            <a th:href="@{/settings}" th:classappend="${active == 'settings'} ? 'active'">Settings</a>
+        </nav>
+        <div class="who">
+            Signed in as <b th:text="${#authentication.name}">admin</b>
+            <form th:action="@{/logout}" method="post"><button class="secondary" type="submit" style="width:100%">Log out</button></form>
+        </div>
+    </aside>
+    <main class="content">
+        <div class="flash ok" th:if="${message}" th:text="${message}"></div>
+        <div class="flash err" th:if="${error}" th:text="${error}"></div>
+        <th:block th:replace="${content}"></th:block>
+    </main>
+</div>
+</body>
+</html>

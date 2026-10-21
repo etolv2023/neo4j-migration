@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Log in · Neo4j Migration</title>
+    <link rel="stylesheet" th:href="@{/app.css}">
+</head>
+<body>
+<div class="login">
+    <form class="card" th:action="@{/login}" method="post">
+        <h1>Neo4j Migration</h1>
+        <p class="sub">Move nodes between Neo4j databases and keep their ids.</p>
+        <div class="flash err" th:if="${param.error}">Wrong user name or password.</div>
+        <div class="flash ok" th:if="${param.logout}">You are signed out.</div>
+        <label for="username">User</label>
+        <input id="username" name="username" type="text" autofocus autocomplete="username">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password">
+        <p><button type="submit" style="width:100%">Log in</button></p>
+    </form>
+</div>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: page('Migrations', ~{::main}, 'migrations')}">
+<body>
+<main>
+    <div class="head">
+        <div><h1>Migrations</h1><p class="sub">Each migration takes nodes from one database and puts them into another or into a new one, keeping their ids.</p></div>
+        <a class="btn" th:href="@{/migrations/new}">New migration</a>
+    </div>
+    <div class="card" th:if="${migrations.isEmpty()}">
+        <div class="empty">
+            <h2>No migrations yet</h2>
+            <p>The flow is: choose <b>From</b> and <b>To</b>, choose what to move, look at the <b>plan</b>, do a <b>dry run</b>, then run it.<br>
+                First add the databases you want to use under <a th:href="@{/endpoints}">Databases</a>.</p>
+        </div>
+    </div>
+    <div class="card" th:if="${!migrations.isEmpty()}">
+        <table>
+            <thead><tr><th>#</th><th>Name</th><th>Kind</th><th>From → To</th><th>State</th><th>Created</th></tr></thead>
+            <tbody>
+            <tr th:each="m : ${migrations}">
+                <td th:text="${m.id()}"></td>
+                <td><a th:href="@{/migrations/{id}(id=${m.id()})}" th:text="${m.name()}"></a></td>
+                <td th:text="${m.isSplit()} ? 'Split' : 'Merge'"></td>
+                <td th:text="${m.sourceName() + ' → ' + (m.targetName() != null ? m.targetName() : 'new database')}"></td>
+                <td><span th:class="${'badge ' + m.state().name()}" th:text="${m.state().label()}"></span></td>
+                <td class="muted" th:text="${@fmt.time(m.createdAt())}"></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+</main>
+</body>
+</html>
