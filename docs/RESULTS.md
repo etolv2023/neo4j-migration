@@ -221,3 +221,109 @@ Limits: the lines are found only through a direct relationship from a node that 
 companies' invoices comes with each of them (a split copies it; a merge compares it by labels and organisation only).
 
 `mvn clean verify` passes with these: 110 tests (33 engine and 11 dashboard unit tests; 39 engine, 5 CLI and 22 dashboard integration tests).
+
+## Stage D (speed for billions of nodes)
+
+The target use is a source of about 100 billion nodes (maybe 200 billion relationships) from which 1 to 2 billion nodes are
+moved. Everything below was measured in the same 2-vCPU / 8 GB sandbox as the rest; the real machine is much bigger, so
+**numbers marked "extrapolation" are arithmetic on these measurements, not measurements**.
+
+### What was measured first (before any code was written for it)
+
+A throw-away store of 10 million nodes and 6.5 million relationships (2.3 GB), a selection of 10% of the nodes, and the
+selected nodes and relationships turned into CSV lines, by each reader:
+
+| Reader | 1 thread | 2 threads | 4 threads |
+|---|---|---|---|
+| Bolt, nodes | 89,000 /s | 113,000–116,000 /s | 108,000 /s |
+| Bolt, relationships | 87,000 /s | 130,000–135,000 /s | 145,000 /s |
+| Kernel (embedded, read only), nodes | 930,000 /s | 850,000–940,000 /s | 650,000 /s |
+| Kernel, relationships | 776,000 /s | 960,000–1,030,000 /s | 990,000 /s |
+| Kernel, full scan for ids (partitioned) | 548,000 /s | 640,000–656,000 /s | 480,000 /s |
+
+Bolt stops scaling at two threads (the server answers; the driver is not the limit). The kernel is 7 to 9 times faster per
+record and only the two CPUs of the sandbox stop it from scaling further. This is why the tool now reads dumps and stopped
+data directories with the kernel directly (module `reader`, a child Java process per opened store) and keeps Bolt for running
+servers. A running server cannot be read this way: its store is locked.
+
+### The tool itself, end to end (select the ids, then export CSV)
+
+Same store, same selection (1,000,000 nodes, 758,500 relationships), measured through the real classes, Bolt served by the
+same database so that the comparison is the reader and not Docker:
+
+| Reader | Workers | Select ids | Export CSV | Total |
+|---|---|---|---|---|
+| Fast reader | 1 | 2.6 s | 7.9 s | 10.5 s |
+| Fast reader | 2 | 1.4 s | 3.6 s | 5.1 s |
+| Fast reader | 4 | 1.0 s | 3.3 s | 4.3 s |
+| Bolt | 1 | 9.4 s | 33.3 s | 42.7 s |
+| Bolt | 2 | 5.9 s | 21.0 s | 27.0 s |
+| Bolt | 4 | 6.2 s | 19.0 s | 25.2 s |
+
+The three Bolt runs printed the same node fingerprint (`eae5df465c00668d`); the fast reader's equality with Bolt, and the
+independence of the number of workers, are checked by the tests below, not by this table. The first run of each group may
+include reading the store into the page cache, which later runs profit from.
+
+Extrapolation, to be checked on the real machine: the export runs at about 500,000 records per second on two CPUs, so 1 billion
+nodes and about 0.75 billion relationships take in the order of one hour per 2 CPUs if the store is in the page cache, and the
+disk decides if it is not. Scanning for the ids is a full scan of the node store; at 10 million nodes in 1.4 s on two CPUs
+(7 million per second), 100 billion nodes are in the order of 4 hours on two CPUs, and less with more cores, but the disk is
+the limit at that size. These are not promises.
+
+### Memory
+
+The selected ids are a compressed bitmap (RoaringBitmap, 64 bit), not a list of numbers. Measured with 50 million ids:
+every second id costs 0.5 byte per id; ids spread at random over 100 billion cost about 6.2 bytes per id (a plain list of
+longs costs 8, a hash set about 16 to 40). One billion spread-out ids are therefore about 6 GB, one billion dense ids about
+0.5 GB. Past the memory the settings allow (default 512 MB), the ids go to a memory-mapped file on disk at 8 bytes per id
+and are read from there; with a 64 MiB limit, 50 million sparse ids spilled and the heap stayed flat. CSV is written as it is
+read, in files of a fixed size per worker, and nothing is collected in memory except the property names and a few counters.
+
+### What runs in parallel
+
+- Reading: the sorted ids are split into one contiguous share per worker; nodes and relationships are exported by all workers
+  at once, each writing its own files. The first failure stops the others.
+- Comparison with the finished database: counts, then the ids and a 64-bit fingerprint of every node and relationship, summed
+  so that the order does not matter; on all workers, and directly on the finished store (server stopped) with the fast reader.
+- Import: `--threads` and `--max-off-heap-memory` are settings.
+- Properties the CSV import cannot carry are written afterwards in parallel batches of 1,000.
+- Several migrations at the same time: a setting (default 2).
+
+### What cannot be made faster
+
+- `neo4j-admin database import` with `--id-type=actual` writes a node store of about 16 bytes times the **highest selected id**,
+  not times the number of selected nodes. If the highest selected id is near 100 billion, that is about 1.6 TB of node store
+  even for 1 billion nodes, and the import time and memory grow with it. The plan warns when the new store will be much bigger
+  than the selection. Keeping the ids is what makes this necessary; if the ids of the moved nodes can be made smaller (for
+  example by moving them in id order, or by keeping an id map), the cost goes away, and that is a decision for you.
+- A merge rebuilds the whole target (all its nodes, plus the restored ones). Its cost is the size of the target, not of what is
+  restored.
+- `neo4j-admin database check` reads every record of the new database. It stays an option (on by default; switch it off in
+  Settings for a big database); the comparison with the source always runs.
+- A running server can only be read over Bolt. For a big source, read a dump or a stopped data directory instead.
+
+### Safety of the fast reader
+
+Even read only, Neo4j rewrites a few small bookkeeping files when it opens a store (the id files, the counts store, the
+token-lookup index, a checkpoint). The reader therefore **copies** those into its scratch directory and works on the copies;
+the big record files, which it never writes, and the lock file are linked. Tests: a clean store is read and the names, sizes
+and modification times of every file in `databases/` and `transactions/` are the same afterwards; a store that was killed
+without a clean shutdown (a child process that halts itself) is refused before anything is opened, with the files unchanged,
+because recovering it would write to the source. The reader needs write permission on the record files (Neo4j opens them for
+writing); when the user of the dashboard does not have it, or anything else prevents the reader from starting, the job log says
+so and the old way (a temporary server over Bolt) is used.
+
+### Tests added
+
+`IdSetTest` (5), `FastReaderIT` (6: the same ids, CSV files, counts and fingerprints as Bolt for 1, 2 and 4 workers, over 20
+selections including neighbours), `SplitFastIT` (a split with 3 reading workers, 2 import threads and a memory limit gives the
+same database fingerprints as the Bolt split with 1; also as a data directory), `MergeFastIT` (the same for a merge, source and
+target both read directly), `ReaderSafetyIT` (2), `SplitServiceIT.severalWorkersGiveTheSameDatabaseAndTheSameFingerprintsAsOne`,
+and in `WebIT` the settings, a stopped data directory read in place and left unchanged, and a split that outputs a data directory.
+
+### Still open
+
+Hardware of the real machine; whether the organisation property is indexed in the real data (the plan warns when a running
+source has no index on it; the fast reader does not use indexes); and whether split or merge matters more at this size,
+because the merge costs the size of the whole target.
+

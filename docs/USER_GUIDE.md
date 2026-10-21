@@ -47,6 +47,9 @@ reverse proxy with TLS; the dashboard has no TLS of its own.
 
 - `TOOL_ADMIN_*` creates the first user **only when there are no users yet**. Later you change the password in Settings.
 - If you change `TOOL_SECRET`, saved Neo4j passwords become unreadable; enter them again.
+- **Fast reader.** `mvn clean verify` also builds the reader's jars in `reader/target/lib`. The dashboard finds them when you start
+  it from the folder that holds `reader/` (or a folder `reader-lib/`), or you set the directory in Settings (section 7). Without
+  them the tool still works, only slower: it reads dumps and stopped data directories through a temporary server.
 - Run the dashboard **on the machine that has the dumps or data directories** (or can mount them). Paths you type are paths on
   that machine.
 
@@ -272,14 +275,26 @@ Things to know:
 | Backup directory | where the mandatory backup of a merge target is kept; the tool never deletes it |
 | Swap a merge into the data directory | on by default; off writes the merged database as a dump instead of changing the data directory |
 | Create the same indexes and constraints | on by default; switch off to build the new database without them |
-| Check the new database | on by default; runs `neo4j-admin database check` before dumping. Thorough, and slow on a big database. |
+| A split leaves a data directory | off by default; on leaves `databases/` and `transactions/` instead of a dump, which saves writing the whole store and loading it again |
+| Check the new database | on by default; runs `neo4j-admin database check` before dumping. It reads every record: **hours on billions of nodes**. Switch it off for a big database; the comparison with the source (counts, ids, fingerprints) always runs. |
 | Heap / page cache | memory of the temporary server (default 1g each); raise for big dumps |
 | Wait up to (minutes) | how long a temporary server may take to start |
+| Fast reader | on by default; reads a dump (after loading it into a folder) or a stopped data directory with the Neo4j kernel on all threads, about 5 to 10 times faster than through a temporary server. Falls back by itself, and says why in the job log. A running server is always read over Bolt. |
+| Fast reader jars / heap / page cache | where `reader/target/lib` is (empty = next to the application); memory of the reader process. The more of the store the page cache holds, the faster the scan. |
+| Reading threads | threads that read the source and write CSV at once (default: the number of cores) |
+| Import threads / memory | `neo4j-admin import` settings; 0 and empty let it decide |
+| Memory for the selected ids | past this many MB the ids go to a file on disk (default 512) |
+| Migrations at the same time | default 2; each one needs its own disk space and memory |
 | Organisation property | default for new migrations |
 | Also move connected nodes without an organisation | default for the box of the same name on new migrations; each migration can change it |
 | Ids per query | batch size of the dry run (min 100; default 10,000) |
 | Examples per section | how many example rows the report keeps |
 | Check relationships | switch off to make the dry run faster |
+
+The speed settings change how fast the work goes, never what comes out: the tests compare the files, counts and fingerprints for
+different numbers of threads. Reading a stopped data directory in place does not change it (the reader copies the few files Neo4j
+rewrites on opening, and refuses a store that was not shut down cleanly); the user of the dashboard needs write permission on the
+record files because Neo4j opens them for writing. Details and measurements: `docs/RESULTS.md`, Stage D.
 
 Settings are stored in MySQL and apply to the next job. You can also change your password on this page.
 
@@ -303,6 +318,10 @@ Be clear about this before relying on the tool:
   they have not been tried on a copy of your real database.
 - Validated on synthetic data (3 million nodes in the benchmark for the dry run), not yet on a copy of your real database.
   Run a plan and a dry run on a copy and read the samples before trusting a number.
+- **Very large sources.** Keeping the ids means the new store has a slot for every id up to the highest selected one (about 16
+  bytes each): with ids near 100 billion that is about 1.6 TB even for 1 billion nodes, and the import time grows with it. A
+  merge rebuilds the whole target. The speed numbers in `docs/RESULTS.md` are from a 2-CPU test machine; the figures for your
+  size are extrapolations until they are measured on your hardware.
 - Only Neo4j 5.26 Community was tested.
 - One kind of user (admin); no roles.
 

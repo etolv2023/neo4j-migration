@@ -17,6 +17,7 @@ From and To are each a **dump file**, a **live running server** or the **data di
 | Module | What it is |
 |---|---|
 | `engine` | Schema reader, selection parser and Cypher builder, dry run, the split and merge (CSV export, id-preserving import, comparison), and the runners that serve a dump or a stopped data directory through a throw-away Neo4j (Docker or a local installation). Reads over Bolt in READ-mode sessions only. |
+| `reader` | The fast reader: a child Java process that opens a store (a loaded dump or a stopped data directory) with the Neo4j kernel, read only, and selects, exports and compares on all threads. Its jars are built into `reader/target/lib`. |
 | `cli` | `neo4j-migration-cli.jar` — `schema` and `dry-run` commands for live servers. |
 | `web` | Spring Boot dashboard: login, databases, migrations (plan, dry run, run a split or a merge, roll back), reports, settings, logs. MySQL + Flyway. |
 
