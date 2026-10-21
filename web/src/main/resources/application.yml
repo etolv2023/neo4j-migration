@@ -9,6 +9,11 @@ spring:
     url: ${TOOL_DB_URL:jdbc:mysql://localhost:3306/neo4j_tool}
     username: ${TOOL_DB_USER:neo4j_tool}
     password: ${TOOL_DB_PASSWORD:}
+    hikari:
+      data-source-properties:
+        # MySQL stamps rows in its own time zone; read them back in the zone of this JVM so that shown times are right.
+        connectionTimeZone: LOCAL
+        forceConnectionTimeZoneToSession: true
   flyway:
     enabled: true
   thymeleaf:

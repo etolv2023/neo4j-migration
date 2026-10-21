@@ -148,7 +148,6 @@ public final class SplitService {
             current = name;
             since = System.nanoTime();
             progress.phase(name);
-            log.accept(name);
         }
 
         void finish() {

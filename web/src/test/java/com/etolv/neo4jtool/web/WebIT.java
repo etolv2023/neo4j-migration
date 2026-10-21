@@ -98,6 +98,7 @@ class WebIT {
     @Autowired SecretBox secrets;
     @Autowired ReportStore reports;
     @Autowired UserStore users;
+    @Autowired JobLog jobLog;
 
     private static final org.springframework.test.web.servlet.request.RequestPostProcessor ADMIN = user("admin").roles("ADMIN");
 
@@ -425,6 +426,15 @@ class WebIT {
         mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));            // a new plan makes the old result stale
         awaitState(id, Migration.State.PLANNED);
         assertThat(migrations.find(id).orElseThrow().runJson()).isNull();
+    }
+
+    @Test
+    @Order(19)
+    void timesInTheLogsAreTheTimesThingsHappened() {
+        jobLog.add("migration:time-check", "INFO", "now");
+
+        java.time.Instant shown = jobLog.forScope("migration:time-check", 1).get(0).at();
+        assertThat(java.time.Duration.between(shown, java.time.Instant.now()).abs()).isLessThan(Duration.ofMinutes(2));
     }
 
     // ---- helpers ----
