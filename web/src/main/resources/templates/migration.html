@@ -98,33 +98,72 @@
     <div class="card">
         <div class="head" style="margin-bottom:8px">
             <h2>Run <span class="badge" title="Not yet checked on a copy of your real database">experimental</span></h2>
-            <form th:action="@{/migrations/{id}/run(id=${migration.id()})}" method="post" th:if="${migration.isSplit()}">
-                <button type="submit" th:disabled="${dryRun == null || dryRun.gate() == 'BLOCKED' || migration.state().busy()}"
-                        th:text="${result == null} ? 'Run the split' : 'Run it again'"></button></form>
+            <form th:action="@{/migrations/{id}/run(id=${migration.id()})}" method="post">
+                <button type="submit" th:disabled="${dryRun == null || dryRun.gate() == 'BLOCKED' || migration.state().busy() || targetKind == 'LIVE'}"
+                        th:text="${migration.isSplit()} ? (${result == null} ? 'Run the split' : 'Run it again') : (${merge == null} ? 'Run the merge' : 'Run it again')"></button></form>
         </div>
-        <p class="sub" th:if="${!migration.isSplit()}">Merging into an existing database is not part of this version. Plan and dry run work; the run does not.</p>
-        <p class="sub" th:if="${migration.isSplit() && dryRun == null}">Run the dry run first.</p>
-        <p class="sub" th:if="${migration.isSplit() && dryRun != null && dryRun.gate() == 'BLOCKED'}">The dry run is blocked. Fix what it reports and run it again.</p>
-        <p class="sub" th:if="${migration.isSplit() && dryRun != null && dryRun.gate() != 'BLOCKED' && result == null}">Copies the selected nodes and the relationships between them into a new database with the same node ids,
-            checks it against the source, and writes it as a dump file in the output directory from the settings. The source is only read, and nothing existing is overwritten.
-            This has not been checked on a copy of your real database yet — try it on a copy first.</p>
-        <th:block th:if="${result != null}">
-            <p><span class="badge ok">DONE</span> <span class="muted" th:text="${' · finished ' + @fmt.time(T(java.time.Instant).parse(result.finishedAt()))}"></span></p>
-            <div class="stats">
-                <div class="stat"><div class="l">Nodes copied</div><div class="big" th:text="${@fmt.number(result.nodes())}"></div></div>
-                <div class="stat"><div class="l">Relationships copied</div><div class="big" th:text="${@fmt.number(result.relationships())}"></div></div>
-                <div class="stat"><div class="l">Left out (go outside)</div><div class="big" th:text="${@fmt.number(result.relationshipsToOutside())}"></div></div>
-                <div class="stat"><div class="l">Indexes · constraints</div><div class="big" th:text="${result.schemaStatements()}"></div></div>
-            </div>
-            <table class="kv" style="margin-top:12px">
-                <tbody>
-                <tr><td>Dump file</td><td class="mono" th:text="${result.outputFile()}"></td></tr>
-                <tr><td>Size</td><td th:text="${@fmt.number(result.outputBytes())} + ' bytes'"></td></tr>
-                <tr><td>Checked</td><td>Every node id, label and property, and every relationship, was read back and compared with the source<span th:if="${result.consistencyChecked()}">; the store passed <span class="mono">neo4j-admin database check</span></span>.</td></tr>
-                <tr><td>Written after the import</td><td th:text="${result.propertiesWrittenAfter() + ' properties the CSV import cannot carry (empty lists and dates with a named time zone)'}"></td></tr>
-                </tbody>
-            </table>
-            <p class="hint">Relationship ids in the new database are new; node ids are the same as in the source.</p>
+        <p class="sub" th:if="${dryRun == null}">Run the dry run first.</p>
+        <p class="sub" th:if="${dryRun != null && dryRun.gate() == 'BLOCKED'}">The dry run is blocked. Fix what it reports and run it again.</p>
+        <p class="sub" th:if="${!migration.isSplit() && targetKind == 'LIVE'}">A running server cannot be merged into
+            (Neo4j Community cannot write nodes with chosen ids into a running database). Stop the server, add its data directory (or a dump of it)
+            under Databases, and make a new migration to that.</p>
+
+        <th:block th:if="${migration.isSplit()}">
+            <p class="sub" th:if="${dryRun != null && dryRun.gate() != 'BLOCKED' && result == null}">Copies the selected nodes and the relationships between them into a new database with the same node ids,
+                checks it against the source, and writes it as a dump file in the output directory from the settings. The source is only read, and nothing existing is overwritten.
+                This has not been checked on a copy of your real database yet — try it on a copy first.</p>
+            <th:block th:if="${result != null}">
+                <p><span class="badge ok">DONE</span> <span class="muted" th:text="${' · finished ' + @fmt.time(T(java.time.Instant).parse(result.finishedAt()))}"></span></p>
+                <div class="stats">
+                    <div class="stat"><div class="l">Nodes copied</div><div class="big" th:text="${@fmt.number(result.nodes())}"></div></div>
+                    <div class="stat"><div class="l">Relationships copied</div><div class="big" th:text="${@fmt.number(result.relationships())}"></div></div>
+                    <div class="stat"><div class="l">Left out (go outside)</div><div class="big" th:text="${@fmt.number(result.relationshipsToOutside())}"></div></div>
+                    <div class="stat"><div class="l">Indexes · constraints</div><div class="big" th:text="${result.schemaStatements()}"></div></div>
+                </div>
+                <table class="kv" style="margin-top:12px">
+                    <tbody>
+                    <tr><td>Dump file</td><td class="mono" th:text="${result.outputFile()}"></td></tr>
+                    <tr><td>Size</td><td th:text="${@fmt.number(result.outputBytes())} + ' bytes'"></td></tr>
+                    <tr><td>Checked</td><td>Every node id, label and property, and every relationship, was read back and compared with the source<span th:if="${result.consistencyChecked()}">; the store passed <span class="mono">neo4j-admin database check</span></span>.</td></tr>
+                    <tr><td>Written after the import</td><td th:text="${result.propertiesWrittenAfter() + ' properties the CSV import cannot carry (empty lists and dates with a named time zone)'}"></td></tr>
+                    </tbody>
+                </table>
+                <p class="hint">Relationship ids in the new database are new; node ids are the same as in the source.</p>
+            </th:block>
+        </th:block>
+
+        <th:block th:if="${!migration.isSplit()}">
+            <p class="sub" th:if="${dryRun != null && dryRun.gate() != 'BLOCKED' && merge == null && targetKind != 'LIVE'}">
+                Dumps the stopped target into the backup directory first (that backup is kept), builds a database that holds everything the target has plus the
+                selected nodes that are missing, with all ids kept, compares and checks it, and then
+                <span th:text="${targetKind == 'DUMP'} ? 'writes it as a new dump file; the dump you chose is not changed.' : 'swaps it into the data directory (or only writes a dump, by the settings). The old database is kept next to it and can be rolled back.'"></span>
+                The target's server must stay stopped for the whole run. This has not been checked on a copy of your real database yet — try it on a copy first.</p>
+            <th:block th:if="${merge != null}">
+                <p><span class="badge ok">DONE</span> <span class="muted" th:text="${' · finished ' + @fmt.time(T(java.time.Instant).parse(merge.finishedAt()))}"></span>
+                    <span class="badge warn" th:if="${merge.rolledBackAt() != null}">ROLLED BACK</span></p>
+                <div class="stats">
+                    <div class="stat"><div class="l">Nodes the target had</div><div class="big" th:text="${@fmt.number(merge.targetNodes())}"></div></div>
+                    <div class="stat"><div class="l">Nodes restored</div><div class="big" th:text="${@fmt.number(merge.restoredNodes())}"></div></div>
+                    <div class="stat"><div class="l">Already there</div><div class="big" th:text="${@fmt.number(merge.alreadyThereNodes())}"></div></div>
+                    <div class="stat"><div class="l">Relationships restored</div><div class="big" th:text="${@fmt.number(merge.restoredRelationships())}"></div></div>
+                    <div class="stat"><div class="l">Left out (other end not on target)</div><div class="big" th:text="${@fmt.number(merge.droppedRelationships())}"></div></div>
+                </div>
+                <table class="kv" style="margin-top:12px">
+                    <tbody>
+                    <tr><td>Backup of the target</td><td><span class="mono" th:text="${merge.backupFile()}"></span> <span class="muted" th:text="${'(' + @fmt.number(merge.backupBytes()) + ' bytes)'}"></span></td></tr>
+                    <tr th:if="${merge.swapped()}"><td>New database</td><td>In <span class="mono" th:text="${merge.dataDirectory()}"></span>
+                        <span th:if="${merge.rolledBackAt() == null}">— the old one is kept in <span class="mono" th:text="${merge.keepName()}"></span></span>
+                        <span th:if="${merge.rolledBackAt() != null}">— rolled back; the one that was swapped in is kept in <span class="mono" th:text="${'rolled-back-' + merge.keepName()}"></span></span></td></tr>
+                    <tr th:unless="${merge.swapped()}"><td>Merged dump</td><td><span class="mono" th:text="${merge.outputFile()}"></span> <span class="muted" th:text="${'(' + @fmt.number(merge.outputBytes()) + ' bytes)'}"></span></td></tr>
+                    <tr><td>Checked</td><td>The new database was read back and compared with everything that was exported, node by node and relationship by relationship<span th:if="${merge.consistencyChecked()}">; the store passed <span class="mono">neo4j-admin database check</span></span>.</td></tr>
+                    </tbody>
+                </table>
+                <p class="hint">Relationship ids are new in the whole database; node ids are all kept. Relationships of restored nodes whose other end is not on the target are not restored.</p>
+                <form th:if="${merge.swapped() && merge.rolledBackAt() == null}" th:action="@{/migrations/{id}/rollback(id=${migration.id()})}" method="post" style="margin-top:12px">
+                    <button class="danger" type="submit" th:disabled="${migration.state().busy()}">Roll back</button>
+                    <span class="hint">Puts the old database back. The server of this data directory must be stopped.</span>
+                </form>
+            </th:block>
         </th:block>
     </div>
 

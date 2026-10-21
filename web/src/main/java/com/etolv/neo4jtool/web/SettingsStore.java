@@ -26,6 +26,8 @@ public class SettingsStore {
                 rows.getOrDefault("neo4j_home", d.neo4jHome()),
                 rows.getOrDefault("work_dir", d.workDir()),
                 rows.getOrDefault("output_dir", d.outputDir()),
+                rows.getOrDefault("backup_dir", d.backupDir()),
+                Boolean.parseBoolean(rows.getOrDefault("merge_swap", String.valueOf(d.mergeSwap()))),
                 Boolean.parseBoolean(rows.getOrDefault("copy_schema", String.valueOf(d.copySchema()))),
                 Boolean.parseBoolean(rows.getOrDefault("check_after_build", String.valueOf(d.checkAfterBuild()))),
                 rows.getOrDefault("temp_heap", d.tempHeap()),
@@ -45,6 +47,8 @@ public class SettingsStore {
         put("neo4j_home", s.neo4jHome() == null ? "" : s.neo4jHome());
         put("work_dir", s.workDir());
         put("output_dir", s.outputDir());
+        put("backup_dir", s.backupDir());
+        put("merge_swap", String.valueOf(s.mergeSwap()));
         put("copy_schema", String.valueOf(s.copySchema()));
         put("check_after_build", String.valueOf(s.checkAfterBuild()));
         put("temp_heap", s.tempHeap());
@@ -68,6 +72,9 @@ public class SettingsStore {
         }
         if (s.outputDir() == null || s.outputDir().isBlank()) {
             throw new IllegalArgumentException("Give a directory for the dump files a split writes");
+        }
+        if (s.backupDir() == null || s.backupDir().isBlank()) {
+            throw new IllegalArgumentException("Give a directory for the backups a merge takes");
         }
         if (s.orgProperty() == null || s.orgProperty().isBlank()) {
             throw new IllegalArgumentException("Give the property that identifies the organisation");

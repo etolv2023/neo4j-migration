@@ -33,6 +33,16 @@ public interface InstanceRunner {
      */
     RunningInstance serveDataDirectory(Path dataDirectory, String database, Consumer<String> log);
 
+    /**
+     * Replaces a database of a stopped server's data directory with one built in {@code newDataDirectory} (by
+     * {@link #importDatabase}). The old store is not deleted: it moves to {@code <target>/<keepName>} and
+     * {@link #restoreDatabase} brings it back. The new files get the owner of the old ones. The server must stay stopped.
+     */
+    void swapDatabase(Path targetDataDirectory, Path newDataDirectory, String database, String keepName, Consumer<String> log);
+
+    /** Undoes {@link #swapDatabase}: the kept store comes back and the new one is set aside, not deleted. */
+    void restoreDatabase(Path targetDataDirectory, String database, String keepName, Consumer<String> log);
+
     /** Removes a workspace, including files that a container wrote as another user. */
     default void deleteWorkspace(Workspace workspace) {
         workspace.delete(root -> { });

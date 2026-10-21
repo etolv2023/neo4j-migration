@@ -1,4 +1,4 @@
-package com.etolv.neo4jtool.engine.split;
+package com.etolv.neo4jtool.engine.build;
 
 import java.util.List;
 
@@ -26,7 +26,4 @@ public record SplitResult(
         String nodeFingerprint,
         String relationshipFingerprint,
         List<Phase> phases) {
-
-    public record Phase(String name, long millis) {
-    }
 }

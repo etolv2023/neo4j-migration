@@ -1,4 +1,4 @@
-package com.etolv.neo4jtool.engine.split;
+package com.etolv.neo4jtool.engine.build;
 
 import com.etolv.neo4jtool.engine.conn.Neo4jClient;
 import java.util.ArrayList;

@@ -123,6 +123,20 @@ public final class DockerRunner implements InstanceRunner {
     }
 
     @Override
+    public void swapDatabase(Path targetDataDirectory, Path newDataDirectory, String database, String keepName, Consumer<String> log) {
+        Commands.run(List.of("docker", "run", "--rm", "--entrypoint", "sh",
+                "-v", targetDataDirectory.toAbsolutePath() + ":/target", "-v", newDataDirectory.toAbsolutePath() + ":/new",
+                settings.dockerImage(), "-c", StoreSwap.SWAP, "sh", "/target", "/new", database, keepName), Map.of(), null, log);
+    }
+
+    @Override
+    public void restoreDatabase(Path targetDataDirectory, String database, String keepName, Consumer<String> log) {
+        Commands.run(List.of("docker", "run", "--rm", "--entrypoint", "sh",
+                "-v", targetDataDirectory.toAbsolutePath() + ":/target",
+                settings.dockerImage(), "-c", StoreSwap.RESTORE, "sh", "/target", database, keepName), Map.of(), null, log);
+    }
+
+    @Override
     public void deleteWorkspace(Workspace workspace) {
         workspace.delete(this::removeFiles);
     }

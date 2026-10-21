@@ -379,14 +379,14 @@ class WebIT {
 
     @Test
     @Order(17)
-    void aRunNeedsAFinishedDryRunAndOnlySplitsCanRunInThisVersion() throws Exception {
+    void aRunNeedsADryRunThatIsNotBlocked() throws Exception {
         long split = createMigration("not ready", "backup", null, Map.of("orgIds", "2"));
         mvc.perform(post("/migrations/" + split + "/run").with(ADMIN).with(csrf()))
                 .andExpect(flash().attribute("error", containsString("dry run first")));
 
         Migration merge = migrations.all().stream().filter(m -> m.name().equals("org 2 back to live")).findFirst().orElseThrow();
         mvc.perform(post("/migrations/" + merge.id() + "/run").with(ADMIN).with(csrf()))
-                .andExpect(flash().attribute("error", containsString("Merging")));
+                .andExpect(flash().attribute("error", containsString("dry run is blocked")));
         mvc.perform(get("/migrations/" + split).with(ADMIN)).andExpect(status().isOk())
                 .andExpect(content().string(containsString("Run the dry run first")));
         assertThat(migrations.find(split).orElseThrow().state()).isEqualTo(Migration.State.DRAFT);
@@ -396,10 +396,7 @@ class WebIT {
     @Order(18)
     void aSplitIsRunToADumpFileAndTheResultIsShown() throws Exception {
         java.nio.file.Path out = java.nio.file.Files.createTempDirectory("split-out-");
-        AppSettings current = settings.get();
-        settings.save(new AppSettings(current.runner(), current.dockerImage(), current.neo4jHome(), current.workDir(), out.toString(),
-                true, false, current.tempHeap(), current.tempPageCache(), current.startTimeoutMinutes(), current.orgProperty(),
-                current.batchSize(), current.sampleSize(), current.analyseRelationships()));
+        useDirectories(out, java.nio.file.Files.createTempDirectory("backups-"));
         long id = createMigration("Split org 2!", "backup", null, Map.of("orgIds", "2"));
         mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));
         awaitState(id, Migration.State.PLANNED);
@@ -411,7 +408,7 @@ class WebIT {
                 .andExpect(flash().attribute("error", containsString("already working")));
         Migration done = awaitState(id, Migration.State.RUN_DONE, Duration.ofMinutes(8));
 
-        var result = com.etolv.neo4jtool.engine.Json.read(done.runJson(), com.etolv.neo4jtool.engine.split.SplitResult.class);
+        var result = com.etolv.neo4jtool.engine.Json.read(done.runJson(), com.etolv.neo4jtool.engine.build.SplitResult.class);
         assertThat(result.nodes()).isEqualTo(10);
         assertThat(result.relationships()).isEqualTo(1);
         assertThat(java.nio.file.Path.of(result.outputFile())).isRegularFile().hasParent(out)
@@ -437,7 +434,137 @@ class WebIT {
         assertThat(java.time.Duration.between(shown, java.time.Instant.now()).abs()).isLessThan(Duration.ofMinutes(2));
     }
 
+    @Test
+    @Order(20)
+    void aMergeIntoAStoppedDirectoryBacksUpSwapsAndCanBeRolledBack() throws Exception {
+        java.nio.file.Path backups = java.nio.file.Files.createTempDirectory("backups-");
+        useDirectories(java.nio.file.Files.createTempDirectory("merge-out-"), backups);
+        java.nio.file.Path stopped = stoppedCopyOfTheBackupWithoutOrgOne();
+        addEndpoint("old server", "STOPPED", stopped.toString(), "", "");
+        long id = createMigration("restore org 1 into the stopped server", "backup", "old server", Map.of("orgIds", "1"));
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));
+        awaitState(id, Migration.State.PLANNED, Duration.ofMinutes(5));
+        mvc.perform(post("/migrations/" + id + "/dry-run").with(ADMIN).with(csrf()));
+        Migration dry = awaitState(id, Migration.State.DRY_RUN_DONE, Duration.ofMinutes(5));
+        assertThat(reports.find(dry.dryRunId()).orElseThrow().missingNodes()).isEqualTo(10);
+
+        mvc.perform(post("/migrations/" + id + "/run").with(ADMIN).with(csrf())).andExpect(redirectedUrl("/migrations/" + id));
+        Migration done = awaitState(id, Migration.State.RUN_DONE, Duration.ofMinutes(10));
+
+        var merge = com.etolv.neo4jtool.engine.Json.read(done.runJson(), com.etolv.neo4jtool.engine.build.MergeResult.class);
+        assertThat(merge.swapped()).isTrue();
+        assertThat(merge.restoredNodes()).isEqualTo(10);
+        assertThat(merge.targetNodes()).isEqualTo(10);
+        assertThat(java.nio.file.Path.of(merge.backupFile())).isRegularFile().hasParent(backups);
+        assertThat(stopped.resolve(merge.keepName()).resolve("databases").resolve("neo4j")).isDirectory();
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("Backup of the target")))
+                .andExpect(content().string(containsString(merge.keepName())))
+                .andExpect(content().string(containsString("Roll back")));
+        mvc.perform(post("/migrations/" + id + "/run").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("Roll it back first")));
+
+        mvc.perform(post("/migrations/" + id + "/rollback").with(ADMIN).with(csrf())).andExpect(redirectedUrl("/migrations/" + id))
+                .andExpect(flash().attribute("message", containsString("Rolled back")));
+        var rolledBack = com.etolv.neo4jtool.engine.Json.read(migrations.find(id).orElseThrow().runJson(),
+                com.etolv.neo4jtool.engine.build.MergeResult.class);
+        assertThat(rolledBack.rolledBackAt()).isNotNull();
+        assertThat(stopped.resolve(merge.keepName())).doesNotExist();
+        assertThat(stopped.resolve("rolled-back-" + merge.keepName()).resolve("databases").resolve("neo4j")).isDirectory();
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(content().string(containsString("ROLLED BACK")));
+        mvc.perform(post("/migrations/" + id + "/rollback").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", org.hamcrest.Matchers.anyOf(containsString("no finished merge"), containsString("already rolled back"))));
+        assertThat(jdbc.sql("SELECT action FROM audit_log").query(String.class).list()).contains("rollback_start", "rollback_done");
+    }
+
+    @Test
+    @Order(21)
+    void aRunningServerCannotBeMergedInto() throws Exception {
+        Migration toLive = migrations.all().stream().filter(m -> m.name().equals("org 1")).findFirst().orElseThrow();
+        assertThat(toLive.state()).isEqualTo(Migration.State.DRY_RUN_DONE);
+
+        mvc.perform(post("/migrations/" + toLive.id() + "/run").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("running server cannot be merged into")));
+        mvc.perform(get("/migrations/" + toLive.id()).with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("Neo4j Community cannot write nodes with chosen ids")));
+        assertThat(migrations.find(toLive.id()).orElseThrow().state()).isEqualTo(Migration.State.DRY_RUN_DONE);
+    }
+
     // ---- helpers ----
+
+    private void useDirectories(java.nio.file.Path output, java.nio.file.Path backups) {
+        AppSettings c = settings.get();
+        settings.save(new AppSettings(c.runner(), c.dockerImage(), c.neo4jHome(), c.workDir(), output.toString(), backups.toString(),
+                true, true, false, c.tempHeap(), c.tempPageCache(), c.startTimeoutMinutes(), c.orgProperty(), c.batchSize(),
+                c.sampleSize(), c.analyseRelationships()));
+    }
+
+    /** The data directory of a stopped server that holds what "backup" holds, except the nodes of organisation 1. */
+    private static java.nio.file.Path stoppedCopyOfTheBackupWithoutOrgOne() throws Exception {
+        java.nio.file.Path data = java.nio.file.Files.createTempDirectory("stopped-");
+        java.nio.file.Files.setPosixFilePermissions(data, java.nio.file.attribute.PosixFilePermissions.fromString("rwxrwxrwx"));
+        STOPPED_DIRECTORIES.add(data);
+        String name = "web-it-stopped-" + System.nanoTime();
+        docker("run", "-d", "--name", name, "-e", "NEO4J_AUTH=none", "-e", "NEO4J_server_memory_heap_max__size=512m",
+                "-e", "NEO4J_server_memory_pagecache_size=128m", "-p", "127.0.0.1::7687", "-v", data.toAbsolutePath() + ":/data", NEO4J_IMAGE);
+        try {
+            String port = docker("port", name, "7687/tcp").lines().findFirst().orElseThrow();
+            String uri = "bolt://127.0.0.1:" + port.substring(port.lastIndexOf(':') + 1);
+            try (Driver driver = GraphDatabase.driver(uri, AuthTokens.none())) {
+                long deadline = System.nanoTime() + Duration.ofMinutes(3).toNanos();
+                while (true) {
+                    try (var session = driver.session()) {
+                        session.run("RETURN 1").consume();
+                        break;
+                    } catch (RuntimeException e) {
+                        if (System.nanoTime() > deadline) {
+                            throw e;
+                        }
+                        Thread.sleep(1000);
+                    }
+                }
+                for (String statement : List.of("UNWIND range(1, 10) AS i CREATE (:Service {org_id: 1})",
+                        "UNWIND range(1, 10) AS i CREATE (:Service {org_id: 2})",
+                        "MATCH (a) WHERE id(a) = 10 MATCH (b) WHERE id(b) = 11 CREATE (a)-[:NEXT]->(b)",
+                        "MATCH (n) WHERE n.org_id = 1 DETACH DELETE n")) {
+                    try (var session = driver.session()) {
+                        session.run(statement).consume();
+                    }
+                }
+            }
+        } finally {
+            docker("stop", "-t", "120", name);
+            docker("rm", name);
+        }
+        return data;
+    }
+
+    private static final List<java.nio.file.Path> STOPPED_DIRECTORIES = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    @org.junit.jupiter.api.AfterAll
+    static void removeStoppedDirectories() {
+        // Files written by a container belong to another user, so a container removes them.
+        for (java.nio.file.Path dir : STOPPED_DIRECTORIES) {
+            docker("run", "--rm", "--entrypoint", "sh", "-v", dir.getParent().toAbsolutePath() + ":/w", NEO4J_IMAGE, "-c",
+                    "rm -rf /w/" + dir.getFileName());
+        }
+    }
+
+    private static String docker(String... args) throws RuntimeException {
+        java.util.List<String> command = new java.util.ArrayList<>();
+        command.add("docker");
+        command.addAll(List.of(args));
+        try {
+            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            String output = new String(process.getInputStream().readAllBytes()).trim();
+            process.waitFor();
+            return output;
+        } catch (java.io.IOException | InterruptedException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+
 
     private void addEndpoint(String name, String kind, String location, String user, String password) throws Exception {
         mvc.perform(post("/endpoints").param("name", name).param("kind", kind).param("location", location)
@@ -464,7 +591,7 @@ class WebIT {
     private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder settingsForm(
             String runner, String image, String orgProperty, String batchSize) {
         return post("/settings").param("runner", runner).param("dockerImage", image).param("neo4jHome", "")
-                .param("workDir", System.getProperty("java.io.tmpdir")).param("outputDir", System.getProperty("java.io.tmpdir") + "/out").param("tempHeap", "512m").param("tempPageCache", "128m")
+                .param("workDir", System.getProperty("java.io.tmpdir")).param("outputDir", System.getProperty("java.io.tmpdir") + "/out").param("backupDir", System.getProperty("java.io.tmpdir") + "/backups").param("tempHeap", "512m").param("tempPageCache", "128m")
                 .param("startTimeoutMinutes", "10").param("orgProperty", orgProperty).param("batchSize", batchSize)
                 .param("sampleSize", "20").param("analyseRelationships", "true");
     }

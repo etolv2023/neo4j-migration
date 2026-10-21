@@ -2,11 +2,11 @@
 
 This guide covers the dashboard and the command line of this version. **Split** (copy some organisations, ids or labels into a
 new database, written as a dump file) is available and marked *experimental* until you have tried it on a copy of your real
-data. **Merge** into an existing database is not available yet: it plans and dry-runs only. Section 9 lists exactly what is
-and is not available.
+data. **Merge** (put lost nodes back into the data directory of a stopped server, or into a dump) is available too, with a
+mandatory backup, a check and a rollback, and is also *experimental*. Section 9 lists exactly what is and is not available.
 
 Contents: 1 What the tool does · 2 Install and start · 3 The flow · 4 Giving it a database · 5 Choosing what to move ·
-6 Plan, dry run and reading the report · 7 Settings · 8 Logs and users · 9 What is not available yet · 10 Command line ·
+6 Plan, dry run and reading the report (6a split, 6b merge) · 7 Settings · 8 Logs and users · 9 What is not available yet · 10 Command line ·
 11 Troubleshooting
 
 ## 1. What the tool does
@@ -57,11 +57,12 @@ reverse proxy with TLS; the dashboard has no TLS of its own.
    move (section 5).
 3. **Plan** — counts what the selection contains and lists the steps and warnings.
 4. **Dry run** — compares every selected id with the target and classifies the relationships. Result: CLEAR, WARN or BLOCKED.
-5. **Run** — for a split (no *To*): builds the new database and writes it as a dump file (section 6a). A merge cannot be run yet
-   (section 9).
+5. **Run** — for a split (no *To*): builds the new database and writes it as a dump file (section 6a). For a merge: backs up the
+   target, builds the merged database, checks it and swaps it in, with a rollback (section 6b). The target must not be running.
 
 The migration page shows these as a stepper with the log underneath. Plan and dry run change nothing. A run reads the source and
-writes only new files in the work directory and the output directory; it never writes to the source.
+writes only new files in the work, output and backup directories, and (for a merge you chose to swap in) the data directory of the
+stopped target; it never writes to the source or to a running server.
 
 ## 4. Giving it a database
 
@@ -195,6 +196,48 @@ Things to know:
 - The run is **experimental**. It has been tested against Neo4j 5.26.29 on synthetic data with awkward values (see
   `docs/RESULTS.md`); try it on a copy of your real database first and compare the result yourself.
 
+## 6b. Running a merge (restoring into an existing database)
+
+A merge puts the selected nodes that are **missing** on the target back, with their ids, and keeps everything that is on the
+target. It needs a finished dry run that is not BLOCKED, and a target that is **not running**: a *stopped server's data
+directory* (the result is swapped in) or a *dump* (the result is a new dump). A running server cannot be merged into, because
+Neo4j Community cannot write nodes with chosen ids to a running database. Stop the server, add its data directory as a database
+and make the migration to that.
+
+What the Run does:
+
+1. **Backup (mandatory).** A stopped data directory is dumped into the **backup directory** (settings) as
+   `<database>-before-merge-<date-time>.dump`. A dump target is used as it is. The backup is never deleted by the tool.
+2. Reads the target from the backup (the files of the stopped server are not touched).
+3. **Sorts the selected ids.** An id on the target holding the same node (same labels, same organisation) is left alone. An id
+   that is free is restored. An id used by a *different* node is a **clash**: the run stops before building anything and tells
+   you the first id. The tool never decides which node wins.
+4. Exports the whole target and the restored nodes as CSV, builds a **new** database from both with
+   `neo4j-admin database import full --id-type=actual`, writes back what the import cannot carry, creates the target's indexes
+   and constraints, and compares the new database with the exports (ids, counts and a hash over every node and relationship).
+5. Optionally runs `neo4j-admin database check`.
+6. **Swap** (setting "Swap the result into the data directory", on by default). The old store is moved to
+   `<data directory>/before-<date-time>/` and the new one takes its place, with the same owner. If the swap fails midway it puts
+   the old store back. If the swap setting is off, or the target is a dump, the result is written as a dump in the output
+   directory and nothing existing is changed.
+
+After a swap the migration page shows the backup file, the kept folder and a **Roll back** button. Rolling back sets the new
+store aside in `rolled-back-before-<date-time>/` and moves the old one back. Start the server only after you have looked at the
+result; stop it before rolling back. A merge that was swapped in cannot be run again until it is rolled back.
+
+Things to know:
+
+- **Relationship ids change for the whole database**, because the target is rebuilt. Node ids do not change. If anything uses
+  `id(r)`, do not merge.
+- A relationship of a restored node is restored only when its other end is on the target as the *same* node (or is restored
+  too). Relationships to nodes that are not on the target, or are a different node there, are left out and counted.
+- The target is read through Bolt, so a merge into a big database takes time in proportion to the **whole target**, not only
+  the restored nodes. Times for large databases have not been measured beyond the benchmark in `docs/RESULTS.md`.
+- The work directory needs room for the backup copy, the CSV files, the new database and its dump.
+- Swapping with a local Neo4j installation runs `sh`, `mv`, `chown` and `stat -c` on this machine (Linux). If the dashboard is
+  not run as root it may not be able to give the files the old owner; the log then prints the `chown` command to run.
+- The run is **experimental**: try it on a copy of your real data directory first.
+
 ## 7. Settings
 
 | Setting | What it does |
@@ -203,7 +246,9 @@ Things to know:
 | Docker image | e.g. `neo4j:5.26.29-community`. Needs the `docker` command and permission to use it. |
 | Neo4j installation directory | for the installation option, e.g. `/opt/neo4j`. Its own config and logs are not used or changed. |
 | Work directory | where temporary databases are made; deleted when a job ends |
-| Output directory | where the dump files of a split are written |
+| Output directory | where the dump files of a split (or of a merge that is not swapped in) are written |
+| Backup directory | where the mandatory backup of a merge target is kept; the tool never deletes it |
+| Swap a merge into the data directory | on by default; off writes the merged database as a dump instead of changing the data directory |
 | Create the same indexes and constraints | on by default; switch off to build the new database without them |
 | Check the new database | on by default; runs `neo4j-admin database check` before dumping. Thorough, and slow on a big database. |
 | Heap / page cache | memory of the temporary server (default 1g each); raise for big dumps |
@@ -228,10 +273,11 @@ restarts while a job is running, that job is marked as interrupted.
 
 Be clear about this before relying on the tool:
 
-- **Merge cannot be run.** Merging into an existing database (mandatory backup, build, check, swap, rollback) is the next
-  stage. Plan and dry run work for a merge; the Run button does not. Nothing in this tool writes to an existing database.
-- **Split is experimental.** It is covered by integration tests that compare every node and relationship, but it has not been
-  tried on a copy of your real database.
+- **Merging into a running server.** Not possible with Neo4j Community and ids kept; stop the server and merge into its data
+  directory or a dump.
+- **Resolving a clash.** An id used by a different node stops the run; the tool does not choose a winner.
+- **Split and merge are experimental.** They are covered by integration tests that compare every node and relationship, but
+  they have not been tried on a copy of your real database.
 - Validated on synthetic data (3 million nodes in the benchmark for the dry run), not yet on a copy of your real database.
   Run a plan and a dry run on a copy and read the samples before trusting a number.
 - Only Neo4j 5.26 Community was tested.

@@ -12,6 +12,9 @@ import java.time.Duration;
  * @param neo4jHome    Neo4j installation directory for LOCAL
  * @param workDir      where temporary databases are made; needs room for a copy of each dump that is loaded
  * @param outputDir    where the dump files that a split writes are put
+ * @param backupDir    where a merge keeps the dump of the stopped target that it takes before building anything
+ * @param mergeSwap    a merge into a stopped data directory puts the new database in its place (the old one is kept);
+ *                     when off, the merged database is only written as a dump file
  * @param copySchema   a split recreates the source's indexes and constraints in the new database
  * @param checkAfterBuild a split runs the store consistency check on the new database before it dumps it
  */
@@ -21,6 +24,8 @@ public record AppSettings(
         String neo4jHome,
         String workDir,
         String outputDir,
+        String backupDir,
+        boolean mergeSwap,
         boolean copySchema,
         boolean checkAfterBuild,
         String tempHeap,
@@ -34,7 +39,8 @@ public record AppSettings(
     public static AppSettings defaults() {
         return new AppSettings(InstanceSettings.Runner.DOCKER, "neo4j:5.26.29-community", "",
                 Path.of(System.getProperty("java.io.tmpdir"), "neo4j-migration").toString(),
-                Path.of(System.getProperty("java.io.tmpdir"), "neo4j-migration-output").toString(), true, true,
+                Path.of(System.getProperty("java.io.tmpdir"), "neo4j-migration-output").toString(),
+                Path.of(System.getProperty("java.io.tmpdir"), "neo4j-migration-backups").toString(), true, true, true,
                 "1g", "1g", 15, "org_id", 10_000, 20, true);
     }
 

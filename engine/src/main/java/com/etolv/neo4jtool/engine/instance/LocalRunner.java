@@ -88,6 +88,18 @@ public final class LocalRunner implements InstanceRunner {
     }
 
     @Override
+    public void swapDatabase(Path targetDataDirectory, Path newDataDirectory, String database, String keepName, Consumer<String> log) {
+        Commands.run(List.of("sh", "-c", StoreSwap.SWAP, "sh", targetDataDirectory.toAbsolutePath().toString(),
+                newDataDirectory.toAbsolutePath().toString(), database, keepName), Map.of(), null, log);
+    }
+
+    @Override
+    public void restoreDatabase(Path targetDataDirectory, String database, String keepName, Consumer<String> log) {
+        Commands.run(List.of("sh", "-c", StoreSwap.RESTORE, "sh", targetDataDirectory.toAbsolutePath().toString(), database,
+                keepName), Map.of(), null, log);
+    }
+
+    @Override
     public void checkDatabase(Path dataDirectory, String database, Consumer<String> log) {
         Workspace workspace = Workspace.create(settings.workDir(), "check");
         try {

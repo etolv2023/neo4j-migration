@@ -1,4 +1,4 @@
-package com.etolv.neo4jtool.engine.split;
+package com.etolv.neo4jtool.engine.build;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -15,8 +15,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -31,7 +29,6 @@ import org.neo4j.driver.GraphDatabase;
 import org.neo4j.driver.Record;
 import org.neo4j.driver.Session;
 import org.neo4j.driver.SessionConfig;
-import org.neo4j.driver.Value;
 
 /**
  * Splits a source with awkward data into a dump, loads the dump and compares every node and every relationship
@@ -95,7 +92,7 @@ class SplitServiceIT {
     @AfterAll
     void cleanUp() {
         source.close();
-        docker("run", "--rm", "--entrypoint", "sh", "-v", root.getParent().toAbsolutePath() + ":/w",
+        TestDocker.run("run", "--rm", "--entrypoint", "sh", "-v", root.getParent().toAbsolutePath() + ":/w",
                 IMAGE, "-c", "rm -rf /w/" + root.getFileName());
     }
 
@@ -119,7 +116,7 @@ class SplitServiceIT {
         try (Stream<Path> left = Files.list(work)) {
             assertThat(left.toList()).as("work directory after the split").isEmpty();
         }
-        assertThat(docker("ps", "-a", "--filter", "name=neo4j-migration-", "--format", "{{.Names}}"))
+        assertThat(TestDocker.run("ps", "-a", "--filter", "name=neo4j-migration-", "--format", "{{.Names}}"))
                 .as("containers left behind").isEmpty();
     }
 
@@ -127,11 +124,11 @@ class SplitServiceIT {
     void localSplitDoesTheSame() throws Exception {
         Path home = root.resolve("neo4j-home");
         String container = "split-it-copy-" + System.nanoTime();
-        docker("create", "--name", container, IMAGE);
+        TestDocker.run("create", "--name", container, IMAGE);
         try {
-            docker("cp", container + ":/var/lib/neo4j", home.toString());
+            TestDocker.run("cp", container + ":/var/lib/neo4j", home.toString());
         } finally {
-            docker("rm", container);
+            TestDocker.run("rm", container);
         }
         Path work = Files.createDirectories(root.resolve("work-local"));
         InstanceRunner runner = new LocalRunner(settings(InstanceSettings.Runner.LOCAL, work, home));
@@ -151,7 +148,7 @@ class SplitServiceIT {
         InstanceRunner runner = new DockerRunner(settings(InstanceSettings.Runner.DOCKER, work, null));
 
         assertThatThrownBy(() -> split(runner, work, existing, "org_ids: [1]"))
-                .isInstanceOf(SplitException.class).hasMessageContaining("already exists");
+                .isInstanceOf(BuildException.class).hasMessageContaining("already exists");
         assertThat(existing).hasContent("keep me");
     }
 
@@ -161,7 +158,7 @@ class SplitServiceIT {
         InstanceRunner runner = new DockerRunner(settings(InstanceSettings.Runner.DOCKER, work, null));
 
         assertThatThrownBy(() -> split(runner, work, root.resolve("empty.dump"), "org_ids: [12345]"))
-                .isInstanceOf(SplitException.class).hasMessageContaining("matches no node");
+                .isInstanceOf(BuildException.class).hasMessageContaining("matches no node");
         assertThat(root.resolve("empty.dump")).doesNotExist();
         try (Stream<Path> left = Files.list(work)) {
             assertThat(left.toList()).isEmpty();
@@ -170,114 +167,39 @@ class SplitServiceIT {
 
     private SplitResult split(InstanceRunner runner, Path work, Path output, String selectionYaml) {
         return new SplitService().run(source.client(), SelectionConfigParser.parse(selectionYaml), runner, work, output,
-                new SplitOptions(100, true, true), DryRunProgress.NONE, log::add);
+                new BuildOptions(100, true, true), DryRunProgress.NONE, log::add);
     }
 
     /** Loads the dump and compares it, node by node and relationship by relationship, with the source. */
     private void assertMatches(InstanceRunner runner, SplitResult result, Path dump) throws Exception {
         assertThat(dump).isRegularFile();
-        Map<Long, Object> expectedNodes = new TreeMap<>();
-        Map<Long, Object> actualNodes = new TreeMap<>();
-        List<String> expectedRels;
-        List<String> actualRels;
-        List<String> expectedSchema;
-        List<String> actualSchema;
-        // The comparison set is what the source holds for the nodes that are in the dump.
+        GraphCompare.Graph built;
         try (RunningInstance instance = runner.startFromDump(dump, "neo4j", log::add);
-             Driver built = GraphDatabase.driver(instance.boltUri(), AuthTokens.none());
-             Session builtSession = built.session(SessionConfig.forDatabase("neo4j"))) {
-            nodes(builtSession, actualNodes);
-            List<Long> ids = new ArrayList<>(actualNodes.keySet());
-            assertThat(ids).hasSize((int) result.nodes());
-            try (Session sourceSession = source.client().readSession()) {
-                nodesById(sourceSession, ids, expectedNodes);
-                expectedRels = relationships(sourceSession, ids);
+             Driver driver = GraphDatabase.driver(instance.boltUri(), AuthTokens.none());
+             Session session = driver.session(SessionConfig.forDatabase("neo4j"))) {
+            built = GraphCompare.read(session);
+        }
+        assertThat(built.nodes()).hasSize((int) result.nodes());
+        GraphCompare.Graph original;
+        try (Session session = source.client().readSession()) {
+            original = GraphCompare.read(session);
+        }
+        // The split holds the selected nodes and the relationships between them.
+        Map<Long, GraphCompare.Node> expectedNodes = new TreeMap<>();
+        built.nodes().keySet().forEach(id -> expectedNodes.put(id, original.nodes().get(id)));
+        assertThat(built.nodes()).as("nodes with ids, labels and properties").isEqualTo(expectedNodes);
+        List<String> expectedRelationships = new ArrayList<>();
+        try (Session session = source.client().readSession()) {
+            for (Record r : session.run("UNWIND $ids AS i MATCH (a) WHERE id(a) = i MATCH (a)-[r]->(b) WHERE id(b) IN $ids "
+                    + "RETURN id(a) AS a, id(b) AS b, type(r) AS type, properties(r) AS props",
+                    Map.of("ids", new ArrayList<>(built.nodes().keySet()))).list()) {
+                expectedRelationships.add(GraphCompare.relationship(r.get("a").asLong(), r.get("b").asLong(), r.get("type").asString(),
+                        GraphCompare.describe(r.get("props"))));
             }
-            actualRels = relationships(builtSession, ids);
-            actualSchema = schema(builtSession);
-            try (Session sourceSession = source.client().readSession()) {
-                expectedSchema = schema(sourceSession);
-            }
         }
-        assertThat(actualNodes).as("nodes with ids, labels and properties").isEqualTo(expectedNodes);
-        assertThat(actualRels).as("relationships between the selected nodes").containsExactlyInAnyOrderElementsOf(expectedRels);
-        assertThat(actualRels).hasSize((int) result.relationships());
-        assertThat(actualSchema).as("indexes and constraints").isEqualTo(expectedSchema);
-    }
-
-    private static void nodes(Session session, Map<Long, Object> into) {
-        for (Record r : session.run("MATCH (n) RETURN id(n) AS id, labels(n) AS labels, properties(n) AS props").list()) {
-            into.put(r.get("id").asLong(), describe(r));
-        }
-    }
-
-    private static void nodesById(Session session, List<Long> ids, Map<Long, Object> into) {
-        for (Record r : session.run("UNWIND $ids AS i MATCH (n) WHERE id(n) = i RETURN id(n) AS id, labels(n) AS labels, properties(n) AS props",
-                Map.of("ids", ids)).list()) {
-            into.put(r.get("id").asLong(), describe(r));
-        }
-    }
-
-    private static Object describe(Record r) {
-        List<String> labels = new ArrayList<>(r.get("labels").asList(Value::asString));
-        labels.sort(String::compareTo);
-        Map<String, Object> props = new TreeMap<>();
-        r.get("props").asMap().forEach((k, v) -> props.put(k, normalize(v)));
-        return labels + " " + props;
-    }
-
-    /** Relationship ids are not kept, so a relationship is identified by its ends, type and properties. */
-    private static List<String> relationships(Session session, List<Long> ids) {
-        List<String> rows = new ArrayList<>();
-        for (Record r : session.run("""
-                UNWIND $ids AS i MATCH (a) WHERE id(a) = i MATCH (a)-[r]->(b) WHERE id(b) IN $ids
-                RETURN id(a) AS a, id(b) AS b, type(r) AS type, properties(r) AS props""", Map.of("ids", ids)).list()) {
-            Map<String, Object> props = new TreeMap<>();
-            r.get("props").asMap().forEach((k, v) -> props.put(k, normalize(v)));
-            rows.add(r.get("a").asLong() + "->" + r.get("b").asLong() + " " + r.get("type").asString() + " " + props);
-        }
-        return rows;
-    }
-
-    private static List<String> schema(Session session) {
-        List<String> rows = new ArrayList<>();
-        rows.addAll(session.run("SHOW CONSTRAINTS YIELD name, type, labelsOrTypes, properties RETURN name, type, labelsOrTypes, properties").list(SplitServiceIT::schemaRow));
-        rows.addAll(session.run("SHOW INDEXES YIELD name, type, labelsOrTypes, properties, owningConstraint "
-                + "WHERE type <> 'LOOKUP' AND owningConstraint IS NULL RETURN name, type, labelsOrTypes, properties").list(SplitServiceIT::schemaRow));
-        rows.sort(String::compareTo);
-        return rows;
-    }
-
-    private static String schemaRow(Record r) {
-        return r.get("name").asString() + " " + r.get("type").asString() + " " + r.get("labelsOrTypes").asList() + " "
-                + r.get("properties").asList();
-    }
-
-    private static Object normalize(Object value) {
-        if (value instanceof byte[] bytes) {
-            return "bytes:" + Base64.getEncoder().encodeToString(bytes);
-        }
-        if (value instanceof List<?> list) {
-            return list.stream().map(SplitServiceIT::normalize).toList();
-        }
-        if (value instanceof Object[] array) {
-            return Arrays.stream(array).map(SplitServiceIT::normalize).toList();
-        }
-        return value;
-    }
-
-    private static String docker(String... args) {
-        List<String> command = new ArrayList<>();
-        command.add("docker");
-        command.addAll(List.of(args));
-        try {
-            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            String output = new String(process.getInputStream().readAllBytes()).trim();
-            process.waitFor();
-            return output;
-        } catch (java.io.IOException | InterruptedException e) {
-            throw new IllegalStateException(e);
-        }
+        assertThat(built.relationships()).as("relationships between the selected nodes")
+                .containsExactlyInAnyOrderElementsOf(expectedRelationships).hasSize((int) result.relationships());
+        assertThat(built.schema()).as("indexes and constraints").isEqualTo(original.schema());
     }
 
     private static InstanceSettings settings(InstanceSettings.Runner runner, Path work, Path home) {

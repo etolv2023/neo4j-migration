@@ -1,4 +1,4 @@
-package com.etolv.neo4jtool.engine.split;
+package com.etolv.neo4jtool.engine.build;
 
 import com.etolv.neo4jtool.engine.conn.Neo4jClient;
 import java.time.Duration;
@@ -49,10 +49,10 @@ final class DatabaseWriter implements AutoCloseable {
                 Thread.sleep(500);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new SplitException("Interrupted while waiting for the new database", e);
+                throw new BuildException("Interrupted while waiting for the new database", e);
             }
         }
-        throw new SplitException("The new database did not open in time: " + (last == null ? "" : last.getMessage()));
+        throw new BuildException("The new database did not open in time: " + (last == null ? "" : last.getMessage()));
     }
 
     private Session session() {
@@ -81,7 +81,7 @@ final class DatabaseWriter implements AutoCloseable {
                     for (String key : keysById.get(id)) {
                         Value value = props.get(key);
                         if (value == null) {
-                            throw new SplitException("Node " + id + " no longer has the property '" + key
+                            throw new BuildException("Node " + id + " no longer has the property '" + key
                                     + "'. The source changed during the split; run it again.");
                         }
                         Map<String, Object> row = new HashMap<>();
@@ -93,7 +93,7 @@ final class DatabaseWriter implements AutoCloseable {
                 }
             }
             if (rows.size() != to - from) {
-                throw new SplitException("Some nodes that need a property written afterwards are gone from the source. "
+                throw new BuildException("Some nodes that need a property written afterwards are gone from the source. "
                         + "The source changed during the split; run it again.");
             }
             try (Session session = session()) {
@@ -101,7 +101,7 @@ final class DatabaseWriter implements AutoCloseable {
                         "UNWIND $rows AS row MATCH (n) WHERE id(n) = row.id SET n[row.key] = row.value RETURN count(*) AS c",
                         Map.of("rows", rows)).single().get("c").asLong());
                 if (set != rows.size()) {
-                    throw new SplitException("Writing properties afterwards matched " + set + " nodes instead of " + rows.size());
+                    throw new BuildException("Writing properties afterwards matched " + set + " nodes instead of " + rows.size());
                 }
             }
         }
@@ -113,7 +113,7 @@ final class DatabaseWriter implements AutoCloseable {
             try (Session session = session()) {
                 session.run(statement).consume();
             } catch (RuntimeException e) {
-                throw new SplitException("Could not create an index or constraint in the new database: " + statement
+                throw new BuildException("Could not create an index or constraint in the new database: " + statement
                         + "\n" + e.getMessage(), e);
             }
         }

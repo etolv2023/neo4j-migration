@@ -12,6 +12,8 @@ public record MigrationPlan(
         SelectionConfig selection,
         boolean selectsEverything,
         long selectedNodes,
+        long highestSelectedId,
+        long estimatedNodeStoreBytes,
         long estimatedDryRunSeconds,
         List<Step> steps,
         List<String> warnings) {

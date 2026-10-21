@@ -106,7 +106,7 @@ Observed on the demo data (13,000 nodes, dump of 0.5 MB): loading a dump and sta
 seconds, so a plan or dry run on a dump costs that on top of the comparison. Not measured on large dumps.
 
 Known limits: the plan and the dry run each load a dump separately; if the dashboard process is killed during a job the
-temporary container is left behind; Run (split and merge) is not implemented.
+temporary container is left behind.
 
 ## Stage B (split executor)
 
@@ -141,3 +141,56 @@ Bugs found by these tests and fixed: the driver names list types `LIST OF ANY?`,
 Limits: the Run is experimental until it is tried on a copy of the real database; "same node" compares labels and the
 organisation property only; relationship ids change; a relationship property that needs a fix-up after the import is refused;
 the new store is sized by the highest selected node id; times for large databases were not measured.
+
+## Stage C (merge executor)
+
+A merge puts the selected nodes that are missing on a **stopped** target (its data directory, or a dump) back, keeping every
+node the target has. Nothing is written to a running server; Neo4j Community cannot write chosen ids to one.
+
+How it works: dump the stopped target into the backup directory (mandatory, never deleted) → serve that backup on a throw-away
+server and read the target from it → classify every selected id (same node on the target / free / used by a different node,
+which stops the run) → export the whole target and the nodes to restore as CSV → the same build as a split (import with ids
+kept, write back what the import cannot carry, indexes and constraints of the target, read back and compare ids, counts and
+fingerprints, `neo4j-admin database check`) → swap into the data directory (the old store is kept as `before-<time>/`, the swap
+undoes itself on failure, and it is refused if the target's files changed since the backup) or write a dump → rollback
+available.
+
+`mvn clean verify` passes: 98 tests (31 engine and 11 dashboard unit tests; 30 engine, 5 CLI and 21 dashboard integration tests). New tests:
+
+- `MergeServiceIT` (4 tests): a damaged copy of a database (a company deleted, one node holding another company's value, a
+  node that exists only on the target) merged with its backup, **with Docker and with a local installation**. Every node (id,
+  labels, properties) and every relationship of the result is compared with what the merge must give, worked out in the test from
+  both databases; the schema is compared; the backup equals the target as it was; after the rollback the store is
+  byte-for-byte the old one (name, size and time of every file) and a second rollback is refused. A dump target gives a new dump
+  and the target dump is unchanged. A clash and "nothing to restore" stop before anything is built and leave no file behind.
+- `WebIT` (21 tests): a merge into a stopped data directory through the dashboard — dry run, run, result card, backup file,
+  kept directory, a second run refused until it is rolled back, rollback, audit entries — and a merge into a live server refused.
+
+Bug found by these tests: a node created on the target after a deletion takes over the freed id, so it shows up as a clash. The
+tool reports it and stops, which is the intended behaviour; the test data was changed to create it before the deletion.
+
+Run through the dashboard on synthetic data (Docker runner, 2 vCPU, Neo4j heap 1 GB): source 325,000 nodes / 225,000
+relationships, a stopped target with company 1 deleted (216,667 nodes / 108,334 relationships), restoring company 1:
+
+| Step | Seconds |
+|---|---:|
+| Backing up the target (dump) | 25.3 |
+| Comparing the selection with the target (loads the backup) | 11.2 |
+| Exporting the target to CSV | 10.6 |
+| Exporting the nodes to restore to CSV | 6.5 |
+| Import with ids kept | 14.7 |
+| Finishing the new database on a temporary server | 17.2 |
+| Read-back comparison | 7.0 |
+| Stopping the temporary server | 11.1 |
+| `database check` | 11.9 |
+| Swap | 0.9 |
+| **Whole run** | **116** |
+
+Result: 108,333 nodes restored, 116,666 relationships restored, none left out; the rollback took under a second. The plan took
+36 s and the dry run 47 s. The target is exported through Bolt, so a merge costs time in proportion to the whole target; larger
+databases were not measured.
+
+Limits: the Run is experimental until it is tried on a copy of the real database; "same node" compares labels and the
+organisation property only; relationship ids change for the whole database; a relationship of a restored node is restored only
+when its other end is on the target as the same node (or restored too); the store size depends on the highest node id; the
+target's server must stay stopped; the local runner's swap needs `sh`, `mv`, `chown` and `stat -c`.

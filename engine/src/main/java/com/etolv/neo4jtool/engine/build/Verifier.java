@@ -1,4 +1,4 @@
-package com.etolv.neo4jtool.engine.split;
+package com.etolv.neo4jtool.engine.build;
 
 import com.etolv.neo4jtool.engine.conn.Neo4jClient;
 import java.util.List;
@@ -18,10 +18,26 @@ final class Verifier {
     private Verifier() {
     }
 
-    record Outcome(long nodes, long relationships, long nodeFingerprint, long relationshipFingerprint) {
+    /** What the new database must contain: its node ids, and the totals of everything that was exported. */
+    record Expected(IdSet ids, long nodes, long relationships, long nodeFingerprint, long relationshipFingerprint) {
+
+        static Expected of(IdSet ids, CsvExporter.Export... exports) {
+            long nodes = 0;
+            long relationships = 0;
+            long nodeHash = 0;
+            long relationshipHash = 0;
+            for (CsvExporter.Export export : exports) {
+                nodes += export.nodes();
+                relationships += export.relationships();
+                nodeHash += export.nodeFingerprint();
+                relationshipHash += export.relationshipFingerprint();
+            }
+            return new Expected(ids, nodes, relationships, nodeHash, relationshipHash);
+        }
     }
 
-    static Outcome verify(Neo4jClient built, IdSet ids, CsvExporter.Export export) {
+    static void verify(Neo4jClient built, Expected expected) {
+        IdSet ids = expected.ids();
         long nodes = 0;
         long nodeHash = 0;
         long unexpected = 0;
@@ -43,15 +59,15 @@ final class Verifier {
             }
         }
         if (unexpected > 0) {
-            throw new SplitException("The new database has " + unexpected + " nodes whose ids were not selected (the first is "
+            throw new BuildException("The new database has " + unexpected + " nodes whose ids were not selected (the first is "
                     + firstUnexpected + "). It is not what was asked for and has been discarded.");
         }
-        if (nodes != export.nodes()) {
-            throw new SplitException("The new database has " + nodes + " nodes but " + export.nodes()
+        if (nodes != expected.nodes()) {
+            throw new BuildException("The new database has " + nodes + " nodes but " + expected.nodes()
                     + " were exported. It has been discarded.");
         }
-        if (nodeHash != export.nodeFingerprint()) {
-            throw new SplitException("The nodes of the new database differ from the ones that were exported (labels or "
+        if (nodeHash != expected.nodeFingerprint()) {
+            throw new BuildException("The nodes of the new database differ from the ones that were exported (labels or "
                     + "properties changed on the way). It has been discarded.");
         }
 
@@ -66,14 +82,13 @@ final class Verifier {
                 relationships++;
             }
         }
-        if (relationships != export.relationships()) {
-            throw new SplitException("The new database has " + relationships + " relationships but " + export.relationships()
+        if (relationships != expected.relationships()) {
+            throw new BuildException("The new database has " + relationships + " relationships but " + expected.relationships()
                     + " were exported. It has been discarded.");
         }
-        if (relationshipHash != export.relationshipFingerprint()) {
-            throw new SplitException("The relationships of the new database differ from the ones that were exported. "
+        if (relationshipHash != expected.relationshipFingerprint()) {
+            throw new BuildException("The relationships of the new database differ from the ones that were exported. "
                     + "It has been discarded.");
         }
-        return new Outcome(nodes, relationships, nodeHash, relationshipHash);
     }
 }

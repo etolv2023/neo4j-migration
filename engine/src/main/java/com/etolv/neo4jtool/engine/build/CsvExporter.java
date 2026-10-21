@@ -1,4 +1,4 @@
-package com.etolv.neo4jtool.engine.split;
+package com.etolv.neo4jtool.engine.build;
 
 import com.etolv.neo4jtool.engine.conn.Neo4jClient;
 import com.etolv.neo4jtool.engine.dryrun.DryRunProgress;
@@ -21,7 +21,7 @@ import org.neo4j.driver.Value;
 import org.neo4j.driver.Values;
 
 /**
- * Reads the selected nodes, and the relationships between them, from the source and writes them as CSV files for
+ * Reads nodes, and the relationships chosen by its {@link Rule}s, from a database and writes them as CSV files for
  * {@code neo4j-admin database import full --id-type=actual}: the node id is the id column, so ids are kept.
  *
  * <p>It reads twice. The first pass only learns which property types occur, because a CSV column has one type and
@@ -34,8 +34,25 @@ final class CsvExporter {
 
     private static final String NODES = "UNWIND $ids AS i MATCH (n) WHERE id(n) = i "
             + "RETURN id(n) AS id, labels(n) AS labels, properties(n) AS props";
-    private static final String RELATIONSHIPS = "UNWIND $ids AS i MATCH (a) WHERE id(a) = i MATCH (a)-[r]->(b) "
+    private static final String RELATIONSHIPS_OUT = "UNWIND $ids AS i MATCH (a) WHERE id(a) = i MATCH (a)-[r]->(b) "
             + "RETURN id(a) AS a, id(b) AS b, type(r) AS type, id(r) AS rid, properties(r) AS props";
+    private static final String RELATIONSHIPS_IN = "UNWIND $ids AS i MATCH (b) WHERE id(b) = i MATCH (a)-[r]->(b) "
+            + "RETURN id(a) AS a, id(b) AS b, type(r) AS type, id(r) AS rid, properties(r) AS props";
+
+    /**
+     * Which relationships of the exported nodes are written: those that leave an exported node ({@link #OUT}) or
+     * enter one ({@link #IN}), and whose other end is in {@code other}. Relationships whose other end is not in
+     * {@code other} are left out and counted, so the caller can report them.
+     */
+    record Rule(boolean outgoing, IdSet other) {
+        static Rule out(IdSet other) {
+            return new Rule(true, other);
+        }
+
+        static Rule in(IdSet other) {
+            return new Rule(false, other);
+        }
+    }
 
     /** What the export produced, with the numbers the finished database is checked against. */
     record Export(List<String> nodeFiles, List<String> relationshipFiles, long nodes, long relationships,
@@ -44,6 +61,8 @@ final class CsvExporter {
 
     private final Neo4jClient source;
     private final IdSet ids;
+    private final List<Rule> rules;
+    private final String filePrefix;
     private final Path directory;
     private final int batchSize;
     private final DryRunProgress progress;
@@ -51,9 +70,15 @@ final class CsvExporter {
     private final Map<String, GroupPlan> nodePlans = new TreeMap<>();
     private final Map<String, GroupPlan> relationshipPlans = new TreeMap<>();
 
-    CsvExporter(Neo4jClient source, IdSet ids, Path directory, int batchSize, DryRunProgress progress) {
+    /**
+     * @param filePrefix put in front of the names of the files, so that several exports can share one directory
+     */
+    CsvExporter(Neo4jClient source, IdSet ids, List<Rule> rules, String filePrefix, Path directory, int batchSize,
+                DryRunProgress progress) {
         this.source = source;
         this.ids = ids;
+        this.rules = rules;
+        this.filePrefix = filePrefix;
         this.directory = directory;
         this.batchSize = batchSize;
         this.progress = progress;
@@ -65,8 +90,8 @@ final class CsvExporter {
 
         progress.phase("Export, pass 2 of 2: writing the CSV files");
         Fixups fixups = new Fixups();
-        Writers nodeFiles = new Writers("nodes", true);
-        Writers relationshipFiles = new Writers("relationships", false);
+        Writers nodeFiles = new Writers(filePrefix + "nodes", true);
+        Writers relationshipFiles = new Writers(filePrefix + "relationships", false);
         long[] nodeCount = new long[1];
         long[] relationshipCount = new long[1];
         long[] nodeHash = new long[1];
@@ -100,7 +125,7 @@ final class CsvExporter {
         void accept(long start, long end, String type, long relationshipId, Map<String, Value> props);
     }
 
-    /** @return how many relationships start at a selected node and end at one that is not selected */
+    /** @return how many relationships of the exported nodes were left out because of their {@link Rule} */
     private long scan(NodeVisitor nodes, RelationshipVisitor relationships) {
         long outside = 0;
         int total = ids.size();
@@ -118,19 +143,25 @@ final class CsvExporter {
                     nodes.accept(r.get("id").asLong(), labels, r.get("props").asMap(v -> v));
                 }
                 if (seen != batch.length) {
-                    throw new SplitException((batch.length - seen) + " of the selected nodes are gone from the source. "
+                    throw new BuildException((batch.length - seen) + " of the selected nodes are gone from the source. "
                             + "The source changed while it was being read; run the split again.");
                 }
-                result = session.run(RELATIONSHIPS, params);
-                while (result.hasNext()) {
-                    Record r = result.next();
-                    long end = r.get("b").asLong();
-                    if (!ids.contains(end)) {
-                        outside++;
-                        continue;
+                for (Rule rule : rules) {
+                    result = session.run(rule.outgoing() ? RELATIONSHIPS_OUT : RELATIONSHIPS_IN, params);
+                    while (result.hasNext()) {
+                        Record r = result.next();
+                        long start = r.get("a").asLong();
+                        long end = r.get("b").asLong();
+                        if (!rule.outgoing() && ids.contains(start)) {
+                            continue;          // from an exported node: the outgoing rule has written it already
+                        }
+                        if (!rule.other().contains(rule.outgoing() ? end : start)) {
+                            outside++;
+                            continue;
+                        }
+                        relationships.accept(start, end, r.get("type").asString(), r.get("rid").asLong(),
+                                r.get("props").asMap(v -> v));
                     }
-                    relationships.accept(r.get("a").asLong(), end, r.get("type").asString(), r.get("rid").asLong(),
-                            r.get("props").asMap(v -> v));
                 }
             }
             progress.progress(to, total);
@@ -166,7 +197,7 @@ final class CsvExporter {
         try {
             return ValueCodec.encode(value);
         } catch (UnsupportedOperationException e) {
-            throw new SplitException("Node " + id + ", property '" + key + "': " + e.getMessage(), e);
+            throw new BuildException("Node " + id + ", property '" + key + "': " + e.getMessage(), e);
         }
     }
 
@@ -186,7 +217,7 @@ final class CsvExporter {
             }
         }
         if (encoded == null) {
-            throw new SplitException("Relationship " + relationshipId + " of type '" + type + "', property '" + key
+            throw new BuildException("Relationship " + relationshipId + " of type '" + type + "', property '" + key
                     + "': " + reason + ". Copying such properties is only supported for nodes. "
                     + "Leave the relationship type out of the selection's reach or fix the data in the source first.");
         }
@@ -259,7 +290,7 @@ final class CsvExporter {
             try {
                 if (writer == null) {
                     if (writers.size() >= MAX_OPEN_FILES) {
-                        throw new SplitException("The selection needs more than " + MAX_OPEN_FILES + " different CSV layouts "
+                        throw new BuildException("The selection needs more than " + MAX_OPEN_FILES + " different CSV layouts "
                                 + "(label sets or property type combinations). Split it into smaller selections.");
                     }
                     String name = prefix + "-" + names.size() + ".csv";
@@ -296,7 +327,7 @@ final class CsvExporter {
                         present++;
                         String expected = conflicts.contains(key) ? encoded.type() : plan.plainType(key);
                         if (!expected.equals(encoded.type()) || !plan.knows(key, encoded.type())) {
-                            throw new SplitException("The source changed while it was being exported: property '" + key
+                            throw new BuildException("The source changed while it was being exported: property '" + key
                                     + "' now has type " + encoded.type() + " where " + expected + " was planned. Run the split again.");
                         }
                         writer.write(escape(encoded.cell()));
@@ -305,7 +336,7 @@ final class CsvExporter {
                 if (present != cells.size()) {
                     List<String> known = header;
                     String unknown = cells.keySet().stream().filter(key -> !known.contains(key)).findFirst().orElse("?");
-                    throw new SplitException("The source changed while it was being exported: a new property '" + unknown
+                    throw new BuildException("The source changed while it was being exported: a new property '" + unknown
                             + "' appeared. Run the split again.");
                 }
                 writer.write('\n');

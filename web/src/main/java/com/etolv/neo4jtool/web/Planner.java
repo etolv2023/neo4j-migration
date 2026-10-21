@@ -20,12 +20,22 @@ public class Planner {
 
     // The dry run compared about 97,000 nodes per second on a 2-CPU test machine that also ran both servers.
     private static final long NODES_PER_SECOND = 50_000;
+    // The node store of Neo4j 5 keeps 15 bytes for every id up to the highest one in use.
+    private static final long NODE_RECORD_BYTES = 15;
+    private static final long LARGE_STORE_BYTES = 100L * 1024 * 1024;
 
     public MigrationPlan plan(Endpoint source, Neo4jClient from, Endpoint target, Neo4jClient to,
                               SelectionConfig selection) {
         Side fromSide = side(source, from, selection.orgProperty());
         Side toSide = target == null ? null : side(target, to, selection.orgProperty());
-        long selected = count(from, SelectionQueryBuilder.nodeCount(selection));
+        long selected;
+        long highestId;
+        CypherQuery stats = SelectionQueryBuilder.nodeStats(selection);
+        try (Session session = from.readSession()) {
+            var row = session.run(stats.text(), stats.params()).single();
+            selected = row.get("c").asLong();
+            highestId = row.get("maxId").isNull() ? -1 : row.get("maxId").asLong();
+        }
 
         List<String> warnings = new ArrayList<>();
         if (selection.selectsEverything()) {
@@ -46,12 +56,19 @@ public class Planner {
             warnings.add("A dump or a stopped data directory is loaded into a temporary server first. For a big database "
                     + "that takes a while and needs disk space in the work directory.");
         }
+        long storeBytes = (highestId + 1) * NODE_RECORD_BYTES;
+        if (target == null && highestId + 1 > 10 * Math.max(1, selected) && storeBytes > LARGE_STORE_BYTES) {
+            warnings.add("The new database keeps a slot for every node id up to the highest selected one (" + highestId
+                    + "), so it will take about " + megabytes(storeBytes) + " for the nodes alone, although only " + selected
+                    + " nodes are selected. This is how Neo4j stores ids with ids kept; make sure the work and output "
+                    + "directories have room.");
+        }
         if (target != null && target.kind() == Endpoint.Kind.LIVE) {
             warnings.add("Merging into a running server is not possible in Neo4j Community: the target has to be stopped.");
         }
 
         return new MigrationPlan(Instant.now().toString(), target == null ? "SPLIT" : "MERGE", fromSide, toSide, selection,
-                selection.selectsEverything(), selected, Math.max(1, selected / NODES_PER_SECOND),
+                selection.selectsEverything(), selected, highestId, storeBytes, Math.max(1, selected / NODES_PER_SECOND),
                 steps(source, target), warnings);
     }
 
@@ -67,14 +84,20 @@ public class Planner {
                     "neo4j-admin import, then indexes and constraints, then a comparison with the source and a store check.", true));
             steps.add(new Step(5, "Write the new database as a dump file", "Into the output directory from the settings. Nothing existing is overwritten.", true));
         } else {
+            boolean runnable = target.kind() != Endpoint.Kind.LIVE;
+            String notLive = "Needs the target to be a stopped data directory or a dump, not a running server.";
             steps.add(new Step(2, "Dry run against '" + target.name() + "'",
                     "Reports which ids are missing, already the same node, or used by a different node.", true));
-            steps.add(new Step(3, "Back up '" + target.name() + "' with a dump (required)", "Not available in this version.", false));
+            steps.add(new Step(3, "Back up '" + target.name() + "' with a dump (required)",
+                    runnable ? "A dump of the stopped target is written to the backup directory first and kept. A dump target is its own backup."
+                            : notLive, runnable));
             steps.add(new Step(4, "Build a database that holds everything in '" + target.name() + "' plus the selected nodes, ids kept",
-                    "Not available in this version.", false));
+                    runnable ? "Exports the target and the missing nodes, imports them with ids kept, compares and checks the result."
+                            : notLive, runnable));
             steps.add(new Step(5, target.kind() == Endpoint.Kind.DUMP
                     ? "Write the result as a new dump file; the dump you chose is not changed"
-                    : "Check it and swap it in; the old database is kept next to it", "Not available in this version.", false));
+                    : "Swap it in (or write a dump, by setting); the old database is kept next to it and can be rolled back",
+                    runnable ? "Into the data directory, only if its files have not changed since the backup." : notLive, runnable));
         }
         return steps;
     }
@@ -85,10 +108,8 @@ public class Planner {
                 schema.totalNodes(), schema.totalRelationships(), schema.indexes().size(), schema.constraints().size());
     }
 
-    private static long count(Neo4jClient client, CypherQuery query) {
-        try (Session session = client.readSession()) {
-            return session.run(query.text(), query.params()).single().get("c").asLong();
-        }
+    private static String megabytes(long bytes) {
+        return String.format("%,d MB", bytes / 1024 / 1024);
     }
 
     private static String majorMinor(String version) {

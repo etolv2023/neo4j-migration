@@ -6,9 +6,13 @@ import com.etolv.neo4jtool.engine.dryrun.DryRunProgress;
 import com.etolv.neo4jtool.engine.dryrun.DryRunReport;
 import com.etolv.neo4jtool.engine.dryrun.DryRunService;
 import com.etolv.neo4jtool.engine.instance.InstanceRunners;
-import com.etolv.neo4jtool.engine.split.SplitOptions;
-import com.etolv.neo4jtool.engine.split.SplitResult;
-import com.etolv.neo4jtool.engine.split.SplitService;
+import com.etolv.neo4jtool.engine.build.BuildOptions;
+import com.etolv.neo4jtool.engine.build.MergeOptions;
+import com.etolv.neo4jtool.engine.build.MergeResult;
+import com.etolv.neo4jtool.engine.build.MergeService;
+import com.etolv.neo4jtool.engine.build.MergeTarget;
+import com.etolv.neo4jtool.engine.build.SplitResult;
+import com.etolv.neo4jtool.engine.build.SplitService;
 import com.etolv.neo4jtool.engine.selection.SelectionConfig;
 import com.etolv.neo4jtool.engine.selection.SelectionConfigParser;
 import com.etolv.neo4jtool.web.EndpointService.Opened;
@@ -46,6 +50,7 @@ public class MigrationJobs {
     private final AuditLog audit;
     private final DryRunService dryRunService = new DryRunService();
     private final SplitService splitService = new SplitService();
+    private final MergeService mergeService = new MergeService();
     // Two at a time: each job may start throw-away servers and hold all selected ids in memory.
     private final ExecutorService executor = Executors.newFixedThreadPool(2);
     private final Map<Long, Progress> running = new ConcurrentHashMap<>();
@@ -100,12 +105,12 @@ public class MigrationJobs {
         executor.submit(() -> runDryRun(migration));
     }
 
-    /** Splits the selection into a new database and writes it as a dump file. Merging is not part of this version. */
+    /**
+     * A split writes a dump file of the selection. A merge needs a target that is not running (a stopped data directory
+     * or a dump): it backs it up, builds the merged database, and swaps it in or writes it as a dump, by the settings.
+     */
     public void startRun(Migration migration) {
         requireIdle(migration);
-        if (!migration.isSplit()) {
-            throw new IllegalStateException("Merging into an existing database is not available in this version");
-        }
         if (migration.dryRunId() == null) {
             throw new IllegalStateException("Run the dry run first");
         }
@@ -113,11 +118,58 @@ public class MigrationJobs {
         if (gate == null || gate.equals("BLOCKED")) {
             throw new IllegalStateException("The dry run is blocked. Fix what it reports and run it again");
         }
+        if (!migration.isSplit()) {
+            Endpoint target = endpoints.find(migration.targetId())
+                    .orElseThrow(() -> new IllegalStateException("The target '" + migration.targetName() + "' was deleted"));
+            if (target.kind() == Endpoint.Kind.LIVE) {
+                throw new IllegalStateException("A running server cannot be merged into. Stop it, then add its data directory "
+                        + "(or a dump of it) as a database and make a new migration to it");
+            }
+        }
+        if (!migration.isSplit() && migration.runJson() != null) {
+            MergeResult previous = Json.read(migration.runJson(), MergeResult.class);
+            if (previous.swapped() && previous.rolledBackAt() == null) {
+                throw new IllegalStateException("This merge was swapped into the data directory. Roll it back first, "
+                        + "or make a new migration from the new state");
+            }
+        }
         migrations.start(migration.id(), Migration.State.RUNNING);
         jobLog.add(migration.scope(), "INFO", "Run started");
         audit.record("run_start", "#" + migration.id() + " " + migration.name());
         running.put(migration.id(), new Progress("Queued", 0, -1));
-        executor.submit(() -> runSplit(migration));
+        executor.submit(() -> {
+            if (migration.isSplit()) {
+                runSplit(migration);
+            } else {
+                runMerge(migration);
+            }
+        });
+    }
+
+    /** Undoes the swap of a finished merge. The server of the data directory must be stopped. */
+    public void rollback(Migration migration) {
+        requireIdle(migration);
+        if (migration.isSplit() || migration.runJson() == null || migration.state() != Migration.State.RUN_DONE) {
+            throw new IllegalStateException("There is no finished merge to roll back");
+        }
+        MergeResult result = Json.read(migration.runJson(), MergeResult.class);
+        if (!result.swapped() || result.rolledBackAt() != null) {
+            throw new IllegalStateException("This merge was not swapped in, or was already rolled back");
+        }
+        Consumer<String> out = jobLog.sink(migration.scope());
+        jobLog.add(migration.scope(), "INFO", "Rollback started");
+        audit.record("rollback_start", "#" + migration.id() + " " + migration.name());
+        try {
+            MergeResult rolledBack = mergeService.rollback(result, InstanceRunners.create(settings.get().instanceSettings()), out);
+            migrations.ran(migration.id(), Json.write(rolledBack));
+            jobLog.add(migration.scope(), "INFO", "Rollback finished: the old database is back in " + result.dataDirectory());
+            audit.record("system", "rollback_done", "#" + migration.id());
+        } catch (RuntimeException e) {
+            log.warn("Rollback of migration {} failed", migration.id(), e);
+            jobLog.add(migration.scope(), "ERROR", "Rollback failed: " + message(e));
+            audit.record("system", "rollback_failed", "#" + migration.id());
+            throw new IllegalStateException("The rollback failed: " + message(e), e);
+        }
     }
 
     private static void requireIdle(Migration migration) {
@@ -211,7 +263,7 @@ public class MigrationJobs {
             SelectionConfig selection = SelectionConfigParser.parse(migration.selectionYaml());
             AppSettings current = settings.get();
             Path output = Path.of(current.outputDir(), fileName(migration));
-            SplitOptions options = new SplitOptions(current.batchSize(), current.copySchema(), current.checkAfterBuild());
+            BuildOptions options = new BuildOptions(current.batchSize(), current.copySchema(), current.checkAfterBuild());
             running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
             SplitResult result;
             try (Opened from = endpointService.open(source, out)) {
@@ -221,6 +273,39 @@ public class MigrationJobs {
             migrations.ran(migration.id(), Json.write(result));
             jobLog.add(migration.scope(), "INFO", "Run finished: " + result.outputFile());
             audit.record("system", "run_done", "#" + migration.id() + " " + result.outputFile());
+        } catch (Throwable e) {
+            fail(migration, Migration.State.DRY_RUN_DONE, "Run", e);
+        } finally {
+            running.remove(migration.id());
+        }
+    }
+
+    private void runMerge(Migration migration) {
+        Consumer<String> out = jobLog.sink(migration.scope());
+        try {
+            Endpoint source = endpoints.find(migration.sourceId())
+                    .orElseThrow(() -> new IllegalStateException("The source '" + migration.sourceName() + "' was deleted"));
+            Endpoint target = endpoints.find(migration.targetId())
+                    .orElseThrow(() -> new IllegalStateException("The target '" + migration.targetName() + "' was deleted"));
+            SelectionConfig selection = SelectionConfigParser.parse(migration.selectionYaml());
+            AppSettings current = settings.get();
+            MergeTarget mergeTarget = target.kind() == Endpoint.Kind.STOPPED
+                    ? MergeTarget.dataDirectory(Path.of(target.path()), target.database())
+                    : MergeTarget.dump(Path.of(target.path()), target.database());
+            Path output = Path.of(current.outputDir(), fileName(migration));
+            MergeOptions options = new MergeOptions(new BuildOptions(current.batchSize(), current.copySchema(),
+                    current.checkAfterBuild()), current.mergeSwap());
+            running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
+            MergeResult result;
+            try (Opened from = endpointService.open(source, out)) {
+                result = mergeService.run(from.client(), selection, mergeTarget, InstanceRunners.create(current.instanceSettings()),
+                        Path.of(current.workDir()), Path.of(current.backupDir()), output, options, progress(migration.id(), out), out);
+            }
+            migrations.ran(migration.id(), Json.write(result));
+            jobLog.add(migration.scope(), "INFO", result.swapped()
+                    ? "Run finished: the merged database is in " + result.dataDirectory() + "; the old one is in " + result.keepName()
+                    : "Run finished: " + result.outputFile());
+            audit.record("system", "run_done", "#" + migration.id());
         } catch (Throwable e) {
             fail(migration, Migration.State.DRY_RUN_DONE, "Run", e);
         } finally {

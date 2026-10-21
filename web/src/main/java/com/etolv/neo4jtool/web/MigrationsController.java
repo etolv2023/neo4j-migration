@@ -3,7 +3,8 @@ package com.etolv.neo4jtool.web;
 import com.etolv.neo4jtool.engine.Json;
 import com.etolv.neo4jtool.engine.dryrun.DryRunReport;
 import com.etolv.neo4jtool.engine.selection.SelectionConfigParser;
-import com.etolv.neo4jtool.engine.split.SplitResult;
+import com.etolv.neo4jtool.engine.build.MergeResult;
+import com.etolv.neo4jtool.engine.build.SplitResult;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -90,7 +91,12 @@ public class MigrationsController {
         model.addAttribute("progress", jobs.progress(id));
         model.addAttribute("log", jobLog.forScope(migration.scope(), 300));
         model.addAttribute("dryRun", migration.dryRunId() == null ? null : reports.find(migration.dryRunId()).orElse(null));
-        model.addAttribute("result", migration.runJson() == null ? null : Json.read(migration.runJson(), SplitResult.class));
+        model.addAttribute("result", migration.runJson() == null || !migration.isSplit() ? null
+                : Json.read(migration.runJson(), SplitResult.class));
+        model.addAttribute("merge", migration.runJson() == null || migration.isSplit() ? null
+                : Json.read(migration.runJson(), MergeResult.class));
+        model.addAttribute("targetKind", migration.targetId() == null ? null
+                : endpoints.find(migration.targetId()).map(e -> e.kind().name()).orElse(null));
         if (migration.state().busy()) {
             model.addAttribute("refresh", 3);
         }
@@ -110,6 +116,17 @@ public class MigrationsController {
     @PostMapping("/migrations/{id}/run")
     String run(@PathVariable long id, RedirectAttributes redirect) {
         return start(id, redirect, jobs::startRun);
+    }
+
+    @PostMapping("/migrations/{id}/rollback")
+    String rollback(@PathVariable long id, RedirectAttributes redirect) {
+        try {
+            jobs.rollback(find(id));
+            redirect.addFlashAttribute("message", "Rolled back. The old database is back in the data directory.");
+        } catch (IllegalStateException e) {
+            redirect.addFlashAttribute("error", e.getMessage());
+        }
+        return "redirect:/migrations/" + id;
     }
 
     @PostMapping("/migrations/{id}/delete")
