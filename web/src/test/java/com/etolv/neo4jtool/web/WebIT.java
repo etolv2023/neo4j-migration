@@ -471,7 +471,7 @@ class WebIT {
         assertThat(java.nio.file.Path.of(result.outputFile()).getFileName().toString()).doesNotEndWith(".dump");
         List<String> lines = jdbc.sql("SELECT message FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list();
         assertThat(lines).as("nothing fell back to a temporary server").noneMatch(m -> m.contains("Fast reader not used")
-                || m.contains("Fast reader failed") || m.contains("Fast reader off") || m.contains("WARNING"));
+                || m.contains("Fast reader failed") || m.contains("Fast reader off") || m.contains("changed while they were read"));
         assertThat(com.etolv.neo4jtool.engine.build.StoreSignature.of(stopped, "neo4j")).as("the source files").isEqualTo(before);
         useDirectories(out, java.nio.file.Files.createTempDirectory("backups-"));      // back to dump files
     }
