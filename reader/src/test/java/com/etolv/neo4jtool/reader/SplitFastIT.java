@@ -85,7 +85,7 @@ class SplitFastIT {
         SplitResult viaBolt = new SplitService().run(bolt, selection, runner, work, temp.resolve("bolt.dump"),
                 new BuildOptions(100, true, true, 1, 0, "", null), DryRunProgress.NONE, log::add);
         SplitResult viaFast = new SplitService().run(bolt, reader, selection, runner, work, temp.resolve("fast.dump"),
-                new BuildOptions(100, true, true, 3, 0, "", ReaderProcess.factory(readerSettings)), DryRunProgress.NONE, log::add);
+                new BuildOptions(100, true, true, 3, 2, "1g", ReaderProcess.factory(readerSettings)), DryRunProgress.NONE, log::add);
 
         assertThat(viaBolt.nodes()).isEqualTo(200);
         assertThat(viaFast.nodes()).isEqualTo(viaBolt.nodes());
