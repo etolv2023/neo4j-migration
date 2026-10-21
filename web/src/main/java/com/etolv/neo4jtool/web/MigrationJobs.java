@@ -5,10 +5,17 @@ import com.etolv.neo4jtool.engine.dryrun.DryRunOptions;
 import com.etolv.neo4jtool.engine.dryrun.DryRunProgress;
 import com.etolv.neo4jtool.engine.dryrun.DryRunReport;
 import com.etolv.neo4jtool.engine.dryrun.DryRunService;
+import com.etolv.neo4jtool.engine.instance.InstanceRunners;
+import com.etolv.neo4jtool.engine.split.SplitOptions;
+import com.etolv.neo4jtool.engine.split.SplitResult;
+import com.etolv.neo4jtool.engine.split.SplitService;
 import com.etolv.neo4jtool.engine.selection.SelectionConfig;
 import com.etolv.neo4jtool.engine.selection.SelectionConfigParser;
 import com.etolv.neo4jtool.web.EndpointService.Opened;
 import jakarta.annotation.PreDestroy;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -38,6 +45,7 @@ public class MigrationJobs {
     private final JobLog jobLog;
     private final AuditLog audit;
     private final DryRunService dryRunService = new DryRunService();
+    private final SplitService splitService = new SplitService();
     // Two at a time: each job may start throw-away servers and hold all selected ids in memory.
     private final ExecutorService executor = Executors.newFixedThreadPool(2);
     private final Map<Long, Progress> running = new ConcurrentHashMap<>();
@@ -90,6 +98,26 @@ public class MigrationJobs {
         audit.record("dry_run_start", "#" + migration.id() + " " + migration.name());
         running.put(migration.id(), new Progress("Queued", 0, -1));
         executor.submit(() -> runDryRun(migration));
+    }
+
+    /** Splits the selection into a new database and writes it as a dump file. Merging is not part of this version. */
+    public void startRun(Migration migration) {
+        requireIdle(migration);
+        if (!migration.isSplit()) {
+            throw new IllegalStateException("Merging into an existing database is not available in this version");
+        }
+        if (migration.dryRunId() == null) {
+            throw new IllegalStateException("Run the dry run first");
+        }
+        String gate = reports.find(migration.dryRunId()).map(ReportStore.Row::gate).orElse(null);
+        if (gate == null || gate.equals("BLOCKED")) {
+            throw new IllegalStateException("The dry run is blocked. Fix what it reports and run it again");
+        }
+        migrations.start(migration.id(), Migration.State.RUNNING);
+        jobLog.add(migration.scope(), "INFO", "Run started");
+        audit.record("run_start", "#" + migration.id() + " " + migration.name());
+        running.put(migration.id(), new Progress("Queued", 0, -1));
+        executor.submit(() -> runSplit(migration));
     }
 
     private static void requireIdle(Migration migration) {
@@ -173,6 +201,37 @@ public class MigrationJobs {
         } finally {
             running.remove(migration.id());
         }
+    }
+
+    private void runSplit(Migration migration) {
+        Consumer<String> out = jobLog.sink(migration.scope());
+        try {
+            Endpoint source = endpoints.find(migration.sourceId())
+                    .orElseThrow(() -> new IllegalStateException("The source '" + migration.sourceName() + "' was deleted"));
+            SelectionConfig selection = SelectionConfigParser.parse(migration.selectionYaml());
+            AppSettings current = settings.get();
+            Path output = Path.of(current.outputDir(), fileName(migration));
+            SplitOptions options = new SplitOptions(current.batchSize(), current.copySchema(), current.checkAfterBuild());
+            running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
+            SplitResult result;
+            try (Opened from = endpointService.open(source, out)) {
+                result = splitService.run(from.client(), selection, InstanceRunners.create(current.instanceSettings()),
+                        Path.of(current.workDir()), output, options, progress(migration.id(), out), out);
+            }
+            migrations.ran(migration.id(), Json.write(result));
+            jobLog.add(migration.scope(), "INFO", "Run finished: " + result.outputFile());
+            audit.record("system", "run_done", "#" + migration.id() + " " + result.outputFile());
+        } catch (Throwable e) {
+            fail(migration, Migration.State.DRY_RUN_DONE, "Run", e);
+        } finally {
+            running.remove(migration.id());
+        }
+    }
+
+    private static String fileName(Migration migration) {
+        String slug = migration.name().toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
+        String stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+        return (slug.isEmpty() ? "split" : slug) + "-" + migration.id() + "-" + stamp + ".dump";
     }
 
     private DryRunProgress progress(long migrationId, Consumer<String> out) {

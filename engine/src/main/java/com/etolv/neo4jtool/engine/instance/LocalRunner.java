@@ -46,7 +46,6 @@ public final class LocalRunner implements InstanceRunner {
     @Override
     public RunningInstance startFromDump(Path dumpFile, String database, Consumer<String> log) {
         Workspace workspace = Workspace.create(settings.workDir(), "dump");
-        Process server = null;
         try {
             Path data = workspace.directory("data");
             int port = freePort();
@@ -54,7 +53,57 @@ public final class LocalRunner implements InstanceRunner {
             log.accept("Loading " + dumpFile + " as database '" + database + "'");
             Commands.run(List.of(admin(), "database", "load", "--from-stdin", "--overwrite-destination=true", database),
                     environment(conf), dumpFile, log);
+            return launch(workspace, conf, port, log, true, 60);
+        } catch (RuntimeException e) {
+            workspace.delete(root -> { });
+            throw e;
+        }
+    }
 
+    @Override
+    public RunningInstance serveDataDirectory(Path dataDirectory, String database, Consumer<String> log) {
+        Workspace workspace = Workspace.create(settings.workDir(), "serve");
+        try {
+            int port = freePort();
+            Path conf = writeConfig(workspace, dataDirectory, database, port);
+            return launch(workspace, conf, port, log, true, 600);
+        } catch (RuntimeException e) {
+            workspace.delete(root -> { });
+            throw e;
+        }
+    }
+
+    @Override
+    public void importDatabase(Path dataDirectory, String database, ImportFiles files, Consumer<String> log) {
+        Workspace workspace = Workspace.create(settings.workDir(), "import");
+        try {
+            Path conf = writeConfig(workspace, dataDirectory, database, 0);
+            List<String> command = new ArrayList<>(List.of(admin()));
+            command.addAll(ImportFiles.arguments(database, files.directory().toAbsolutePath() + "/",
+                    workspace.root().resolve("import.report").toString(), files));
+            Commands.run(command, environment(conf), null, log);
+        } finally {
+            workspace.delete(root -> { });
+        }
+    }
+
+    @Override
+    public void checkDatabase(Path dataDirectory, String database, Consumer<String> log) {
+        Workspace workspace = Workspace.create(settings.workDir(), "check");
+        try {
+            Path conf = writeConfig(workspace, dataDirectory, database, 0);
+            Commands.run(List.of(admin(), "database", "check", "--report-path=" + workspace.root().toAbsolutePath(), database),
+                    environment(conf), null, log);
+        } finally {
+            workspace.delete(root -> { });
+        }
+    }
+
+    /** Starts the server of the configuration in {@code conf}; closing it stops it and deletes the workspace. */
+    private RunningInstance launch(Workspace workspace, Path conf, int port, Consumer<String> log, boolean ownsWorkspaceData,
+                                   int stopSeconds) {
+        Process server = null;
+        try {
             server = Commands.start(List.of(settings.neo4jHome().resolve("bin").resolve("neo4j").toString(), "console"),
                     environment(conf), null);
             Process running = server;
@@ -73,7 +122,7 @@ public final class LocalRunner implements InstanceRunner {
             BoltWait.until(uri, settings.startTimeout(), () -> running.isAlive() ? null : "exit code " + running.exitValue());
             log.accept("Temporary Neo4j is ready on " + uri);
             return new Instance(uri, () -> {
-                stop(running);
+                stop(running, stopSeconds);
                 drain.interrupt();
                 workspace.delete(root -> { });
             });
@@ -143,10 +192,14 @@ public final class LocalRunner implements InstanceRunner {
     }
 
     private static void stop(Process process) {
+        stop(process, 60);
+    }
+
+    private static void stop(Process process, int seconds) {
         process.descendants().forEach(ProcessHandle::destroy);
         process.destroy();
         try {
-            if (!process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)) {
+            if (!process.waitFor(seconds, java.util.concurrent.TimeUnit.SECONDS)) {
                 process.descendants().forEach(ProcessHandle::destroyForcibly);
                 process.destroyForcibly();
             }

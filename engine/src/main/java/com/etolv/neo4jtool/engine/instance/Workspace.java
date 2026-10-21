@@ -10,7 +10,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.function.Consumer;
 
 /** A directory under the work directory that belongs to one throw-away database. */
-final class Workspace {
+public final class Workspace {
 
     private final Path root;
 
@@ -18,7 +18,7 @@ final class Workspace {
         this.root = root;
     }
 
-    static Workspace create(Path workDir, String prefix) {
+    public static Workspace create(Path workDir, String prefix) {
         try {
             Files.createDirectories(workDir);
             Path root = Files.createTempDirectory(workDir, prefix + "-");
@@ -30,11 +30,11 @@ final class Workspace {
         }
     }
 
-    Path root() {
+    public Path root() {
         return root;
     }
 
-    Path directory(String name) {
+    public Path directory(String name) {
         try {
             Path dir = Files.createDirectories(root.resolve(name));
             Files.setPosixFilePermissions(dir, java.nio.file.attribute.PosixFilePermissions.fromString("rwxrwxrwx"));
@@ -48,7 +48,7 @@ final class Workspace {
      * Deletes everything. Files written by a container can belong to another user; {@code fallback} gets one more try
      * in that case (for Docker, a container that removes them).
      */
-    void delete(Consumer<Path> fallback) {
+    public void delete(Consumer<Path> fallback) {
         try {
             deleteTree(root);
         } catch (IOException | UncheckedIOException e) {

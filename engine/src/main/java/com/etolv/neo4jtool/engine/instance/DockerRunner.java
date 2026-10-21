@@ -42,15 +42,50 @@ public final class DockerRunner implements InstanceRunner {
     @Override
     public RunningInstance startFromDump(Path dumpFile, String database, Consumer<String> log) {
         Workspace workspace = Workspace.create(settings.workDir(), "dump");
-        String name = "neo4j-migration-" + UUID.randomUUID().toString().substring(0, 8);
-        boolean started = false;
         try {
             Path data = workspace.directory("data");
             log.accept("Loading " + dumpFile + " as database '" + database + "'");
             Commands.run(List.of("docker", "run", "--rm", "-i", "--entrypoint", "neo4j-admin",
                     "-v", data.toAbsolutePath() + ":/data", settings.dockerImage(),
                     "database", "load", "--from-stdin", "--overwrite-destination=true", database), Map.of(), dumpFile, log);
+            return launch(data, database, log, workspace, false);
+        } catch (RuntimeException e) {
+            workspace.delete(root -> removeFiles(root));
+            throw e;
+        }
+    }
 
+    @Override
+    public RunningInstance serveDataDirectory(Path dataDirectory, String database, Consumer<String> log) {
+        return launch(dataDirectory, database, log, null, true);
+    }
+
+    @Override
+    public void importDatabase(Path dataDirectory, String database, ImportFiles files, Consumer<String> log) {
+        List<String> command = new ArrayList<>(List.of("docker", "run", "--rm", "--entrypoint", "neo4j-admin",
+                "-v", dataDirectory.toAbsolutePath() + ":/data", "-v", files.directory().toAbsolutePath() + ":/import:ro",
+                settings.dockerImage()));
+        command.addAll(ImportFiles.arguments(database, "/import/", "/tmp/import.report", files));
+        Commands.run(command, Map.of(), null, log);
+    }
+
+    @Override
+    public void checkDatabase(Path dataDirectory, String database, Consumer<String> log) {
+        Commands.run(List.of("docker", "run", "--rm", "--entrypoint", "neo4j-admin", "--user", owner(dataDirectory),
+                "-v", dataDirectory.toAbsolutePath() + ":/data", settings.dockerImage(),
+                "database", "check", "--report-path=/tmp", database), Map.of(), null, log);
+    }
+
+    /**
+     * Starts a server on {@code data}. With {@code graceful} the server is stopped with time to shut down cleanly, which
+     * a database that will be dumped or checked afterwards needs; throw-away servers are simply removed.
+     *
+     * @param workspace deleted together with the server, or null when the caller owns the data
+     */
+    private RunningInstance launch(Path data, String database, Consumer<String> log, Workspace workspace, boolean graceful) {
+        String name = "neo4j-migration-" + UUID.randomUUID().toString().substring(0, 8);
+        boolean started = false;
+        try {
             List<String> run = new ArrayList<>(List.of("docker", "run", "-d", "--name", name, "-e", "NEO4J_AUTH=none",
                     "-e", "NEO4J_initial_dbms_default__database=" + database,
                     "-e", "NEO4J_server_memory_heap_initial__size=" + settings.heapSize(),
@@ -63,26 +98,40 @@ public final class DockerRunner implements InstanceRunner {
             log.accept("Waiting for " + uri);
             BoltWait.until(uri, settings.startTimeout(), () -> died(name));
             log.accept("Temporary Neo4j is ready on " + uri);
-            Workspace owned = workspace;
-            return new Instance(uri, () -> remove(name, owned));
+            return new Instance(uri, () -> remove(name, workspace, graceful));
         } catch (RuntimeException e) {
             if (started) {
                 log.accept(logsOf(name));
             }
-            remove(name, workspace);
+            remove(name, workspace, false);
             throw e;
         }
     }
 
-    private void remove(String container, Workspace workspace) {
+    private void remove(String container, Workspace workspace, boolean graceful) {
         try {
+            if (graceful) {
+                Commands.output(List.of("docker", "stop", "-t", "600", container));
+            }
             Commands.output(List.of("docker", "rm", "-f", container));
         } catch (InstanceException ignored) {
             // never started
         }
-        workspace.delete(root -> Commands.output(List.of("docker", "run", "--rm", "--entrypoint", "sh",
+        if (workspace != null) {
+            workspace.delete(root -> removeFiles(root));
+        }
+    }
+
+    @Override
+    public void deleteWorkspace(Workspace workspace) {
+        workspace.delete(this::removeFiles);
+    }
+
+    /** Files written by a container can belong to another user; a container removes them. */
+    private void removeFiles(Path root) {
+        Commands.output(List.of("docker", "run", "--rm", "--entrypoint", "sh",
                 "-v", root.getParent().toAbsolutePath() + ":/w", settings.dockerImage(),
-                "-c", "rm -rf /w/" + root.getFileName())));
+                "-c", "rm -rf /w/" + root.getFileName()));
     }
 
     private static String hostPort(String container) {

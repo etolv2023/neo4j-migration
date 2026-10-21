@@ -25,6 +25,9 @@ public class SettingsStore {
                 rows.getOrDefault("docker_image", d.dockerImage()),
                 rows.getOrDefault("neo4j_home", d.neo4jHome()),
                 rows.getOrDefault("work_dir", d.workDir()),
+                rows.getOrDefault("output_dir", d.outputDir()),
+                Boolean.parseBoolean(rows.getOrDefault("copy_schema", String.valueOf(d.copySchema()))),
+                Boolean.parseBoolean(rows.getOrDefault("check_after_build", String.valueOf(d.checkAfterBuild()))),
                 rows.getOrDefault("temp_heap", d.tempHeap()),
                 rows.getOrDefault("temp_page_cache", d.tempPageCache()),
                 Integer.parseInt(rows.getOrDefault("start_timeout_minutes", String.valueOf(d.startTimeoutMinutes()))),
@@ -41,6 +44,9 @@ public class SettingsStore {
         put("docker_image", s.dockerImage());
         put("neo4j_home", s.neo4jHome() == null ? "" : s.neo4jHome());
         put("work_dir", s.workDir());
+        put("output_dir", s.outputDir());
+        put("copy_schema", String.valueOf(s.copySchema()));
+        put("check_after_build", String.valueOf(s.checkAfterBuild()));
         put("temp_heap", s.tempHeap());
         put("temp_page_cache", s.tempPageCache());
         put("start_timeout_minutes", String.valueOf(s.startTimeoutMinutes()));
@@ -59,6 +65,9 @@ public class SettingsStore {
         }
         if (s.workDir() == null || s.workDir().isBlank()) {
             throw new IllegalArgumentException("Give a work directory");
+        }
+        if (s.outputDir() == null || s.outputDir().isBlank()) {
+            throw new IllegalArgumentException("Give a directory for the dump files a split writes");
         }
         if (s.orgProperty() == null || s.orgProperty().isBlank()) {
             throw new IllegalArgumentException("Give the property that identifies the organisation");

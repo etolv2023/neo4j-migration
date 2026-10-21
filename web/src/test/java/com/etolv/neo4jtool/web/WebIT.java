@@ -376,6 +376,57 @@ class WebIT {
                 "settings_save", "password_change", "login", "login_failed");
     }
 
+    @Test
+    @Order(17)
+    void aRunNeedsAFinishedDryRunAndOnlySplitsCanRunInThisVersion() throws Exception {
+        long split = createMigration("not ready", "backup", null, Map.of("orgIds", "2"));
+        mvc.perform(post("/migrations/" + split + "/run").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("dry run first")));
+
+        Migration merge = migrations.all().stream().filter(m -> m.name().equals("org 2 back to live")).findFirst().orElseThrow();
+        mvc.perform(post("/migrations/" + merge.id() + "/run").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("Merging")));
+        mvc.perform(get("/migrations/" + split).with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("Run the dry run first")));
+        assertThat(migrations.find(split).orElseThrow().state()).isEqualTo(Migration.State.DRAFT);
+    }
+
+    @Test
+    @Order(18)
+    void aSplitIsRunToADumpFileAndTheResultIsShown() throws Exception {
+        java.nio.file.Path out = java.nio.file.Files.createTempDirectory("split-out-");
+        AppSettings current = settings.get();
+        settings.save(new AppSettings(current.runner(), current.dockerImage(), current.neo4jHome(), current.workDir(), out.toString(),
+                true, false, current.tempHeap(), current.tempPageCache(), current.startTimeoutMinutes(), current.orgProperty(),
+                current.batchSize(), current.sampleSize(), current.analyseRelationships()));
+        long id = createMigration("Split org 2!", "backup", null, Map.of("orgIds", "2"));
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));
+        awaitState(id, Migration.State.PLANNED);
+        mvc.perform(post("/migrations/" + id + "/dry-run").with(ADMIN).with(csrf()));
+        awaitState(id, Migration.State.DRY_RUN_DONE);
+
+        mvc.perform(post("/migrations/" + id + "/run").with(ADMIN).with(csrf())).andExpect(redirectedUrl("/migrations/" + id));
+        mvc.perform(post("/migrations/" + id + "/run").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("already working")));
+        Migration done = awaitState(id, Migration.State.RUN_DONE, Duration.ofMinutes(8));
+
+        var result = com.etolv.neo4jtool.engine.Json.read(done.runJson(), com.etolv.neo4jtool.engine.split.SplitResult.class);
+        assertThat(result.nodes()).isEqualTo(10);
+        assertThat(result.relationships()).isEqualTo(1);
+        assertThat(java.nio.file.Path.of(result.outputFile())).isRegularFile().hasParent(out)
+                .satisfies(p -> assertThat(p.getFileName().toString()).startsWith("split-org-2-" + id + "-").endsWith(".dump"));
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString(result.outputFile())))
+                .andExpect(content().string(containsString("Relationship ids in the new database are new")));
+        assertThat(jdbc.sql("SELECT message FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list())
+                .anyMatch(m -> m.startsWith("Run finished"));
+        assertThat(jdbc.sql("SELECT action FROM audit_log").query(String.class).list()).contains("run_start", "run_done");
+
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));            // a new plan makes the old result stale
+        awaitState(id, Migration.State.PLANNED);
+        assertThat(migrations.find(id).orElseThrow().runJson()).isNull();
+    }
+
     // ---- helpers ----
 
     private void addEndpoint(String name, String kind, String location, String user, String password) throws Exception {
@@ -403,7 +454,7 @@ class WebIT {
     private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder settingsForm(
             String runner, String image, String orgProperty, String batchSize) {
         return post("/settings").param("runner", runner).param("dockerImage", image).param("neo4jHome", "")
-                .param("workDir", System.getProperty("java.io.tmpdir")).param("tempHeap", "512m").param("tempPageCache", "128m")
+                .param("workDir", System.getProperty("java.io.tmpdir")).param("outputDir", System.getProperty("java.io.tmpdir") + "/out").param("tempHeap", "512m").param("tempPageCache", "128m")
                 .param("startTimeoutMinutes", "10").param("orgProperty", orgProperty).param("batchSize", batchSize)
                 .param("sampleSize", "20").param("analyseRelationships", "true");
     }

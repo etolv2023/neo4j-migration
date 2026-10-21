@@ -61,8 +61,11 @@ public class Planner {
                 "Collects the ids of the selected nodes. Reads only.", true));
         if (target == null) {
             steps.add(new Step(2, "Dry run", "Looks at the selected nodes and at the relationships that leave the selection.", true));
-            steps.add(new Step(3, "Export the selected nodes and relationships with their ids", "Not available in this version.", false));
-            steps.add(new Step(4, "Build a new database from the export with ids kept, and check it", "Not available in this version.", false));
+            steps.add(new Step(3, "Export the selected nodes and relationships with their ids",
+                    "Writes CSV files with the exact value types; the source is only read.", true));
+            steps.add(new Step(4, "Build a new database from the export with ids kept, and check it",
+                    "neo4j-admin import, then indexes and constraints, then a comparison with the source and a store check.", true));
+            steps.add(new Step(5, "Write the new database as a dump file", "Into the output directory from the settings. Nothing existing is overwritten.", true));
         } else {
             steps.add(new Step(2, "Dry run against '" + target.name() + "'",
                     "Reports which ids are missing, already the same node, or used by a different node.", true));

@@ -1,22 +1,23 @@
-# Neo4j Migration Tool (read-only preview)
+# Neo4j Migration Tool
 
-Restore or split data between Neo4j 5.x Community databases **keeping `id(n)`**. This version plans and dry-runs; it does
-**not** write to any database yet (the Run stage is the next delivery). A dry run tells you which selected ids are missing
+Restore or split data between Neo4j 5.x Community databases **keeping `id(n)`**. This version plans, dry-runs and can
+**split** the selected data into a new database written as a dump file (experimental until tried on a copy of your data).
+Merging into an existing database is not available yet; it never writes to an existing database. A dry run tells you which selected ids are missing
 on the target, which are already used by a *different* node, and which relationships would be left pointing nowhere.
 
 **Start here: [docs/USER_GUIDE.md](docs/USER_GUIDE.md)** — install, the flow, how to give it a dump, a live server or a
 stopped server's data directory, how to choose a company, ids or labels, and how to read the report.
 
-Flow in the dashboard: add databases → new migration (From, To, what to move) → Plan → Dry run → Run (not available yet).
+Flow in the dashboard: add databases → new migration (From, To, what to move) → Plan → Dry run → Run (a split writes a dump file; a merge cannot be run yet).
 From and To are each a **dump file**, a **live running server** or the **data directory of a stopped server**.
 
 ## Modules
 
 | Module | What it is |
 |---|---|
-| `engine` | Schema reader, selection parser and Cypher builder, dry run, and the runners that serve a dump or a stopped data directory through a throw-away Neo4j (Docker or a local installation). Reads over Bolt in READ-mode sessions only. |
+| `engine` | Schema reader, selection parser and Cypher builder, dry run, the split (CSV export, id-preserving import, comparison), and the runners that serve a dump or a stopped data directory through a throw-away Neo4j (Docker or a local installation). Reads over Bolt in READ-mode sessions only. |
 | `cli` | `neo4j-migration-cli.jar` — `schema` and `dry-run` commands for live servers. |
-| `web` | Spring Boot dashboard: login, databases, migrations (plan, dry run), reports, settings, logs. MySQL + Flyway. |
+| `web` | Spring Boot dashboard: login, databases, migrations (plan, dry run, run a split), reports, settings, logs. MySQL + Flyway. |
 
 Requires Java 21, Maven 3.9+, and Docker for the integration tests (Testcontainers).
 

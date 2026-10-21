@@ -107,3 +107,37 @@ seconds, so a plan or dry run on a dump costs that on top of the comparison. Not
 
 Known limits: the plan and the dry run each load a dump separately; if the dashboard process is killed during a job the
 temporary container is left behind; Run (split and merge) is not implemented.
+
+## Stage B (split executor)
+
+A split copies the selected nodes and the relationships between them into a new database with node ids kept, and writes it
+as a dump file. The source is only read (READ-mode sessions); the only write session talks to the throw-away server that
+holds the new database.
+
+How it works: read the selected ids → export typed CSV (one file per label set and per combination of conflicting property
+types) → `neo4j-admin database import full --id-type=actual --bad-tolerance=0` → throw-away server to write what the import
+cannot carry (empty lists, dates with a named zone) and to create indexes and constraints → read the new database back and
+compare ids, counts and a 64-bit fingerprint over every node and relationship → graceful stop → optional
+`neo4j-admin database check` → dump → move to the output directory → remove all temporary files and containers.
+
+`mvn clean verify` passes: 91 tests (31 engine and 11 dashboard unit tests; 26 engine, 5 CLI and 18 dashboard integration
+tests). New tests:
+
+- `SplitServiceIT`, with the Docker runner and with a local installation: sparse ids (deleted filler), strings with
+  newlines, `\r\n`, quotes, commas and non-ASCII text, empty strings, extreme numbers, all temporal types (including a named
+  time zone), durations (also negative), 2D, 3D and geographic points, lists of strings, numbers, booleans and dates, an
+  empty list, a byte array, the same property name as a number on some nodes and as text on others, parallel relationships,
+  a self relationship, relationship properties, relationships leaving and entering the selection, an index and a unique
+  constraint. The dump is loaded and **every node (id, labels, properties) and every relationship between the selected nodes
+  is compared with the source**, and so are the indexes and constraints; `database check` passes; no container or work file is
+  left; an existing output file is refused; an empty selection stops before anything is built.
+- `ValueCodecTest` for the CSV encoding rules and the fingerprint.
+- Dashboard tests: a run needs a finished dry run, a merge cannot be run, a split runs to a dump file whose path and result
+  are shown, a second run is refused while one is working, the log and audit entries exist, a new plan clears the old result.
+
+Bugs found by these tests and fixed: the driver names list types `LIST OF ANY?`, which made every list property fail; a
+`datetime` with a named zone and an empty list cannot be imported and are now written afterwards.
+
+Limits: the Run is experimental until it is tried on a copy of the real database; "same node" compares labels and the
+organisation property only; relationship ids change; a relationship property that needs a fix-up after the import is refused;
+the new store is sized by the highest selected node id; times for large databases were not measured.

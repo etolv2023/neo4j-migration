@@ -17,7 +17,7 @@
         <div class="s done"><b>1</b><span>From, To, selection</span></div>
         <div th:class="${'s ' + (plan != null ? 'done' : 'now')}"><b>2</b><span>Plan</span></div>
         <div th:class="${'s ' + (dryRun != null ? 'done' : (plan != null ? 'now' : 'off'))}"><b>3</b><span>Dry run</span></div>
-        <div class="s off"><b>4</b><span>Run</span></div>
+        <div th:class="${'s ' + (result != null ? 'done' : (dryRun != null ? 'now' : 'off'))}"><b>4</b><span>Run</span></div>
     </div>
 
     <div class="flash work" th:if="${migration.state().busy()}">
@@ -95,13 +95,37 @@
     </div>
 
     <!-- Run -->
-    <div class="card muted-card">
+    <div class="card">
         <div class="head" style="margin-bottom:8px">
-            <h2>Run</h2>
-            <button type="button" disabled>Run</button>
+            <h2>Run <span class="badge" title="Not yet checked on a copy of your real database">experimental</span></h2>
+            <form th:action="@{/migrations/{id}/run(id=${migration.id()})}" method="post" th:if="${migration.isSplit()}">
+                <button type="submit" th:disabled="${dryRun == null || dryRun.gate() == 'BLOCKED' || migration.state().busy()}"
+                        th:text="${result == null} ? 'Run the split' : 'Run it again'"></button></form>
         </div>
-        <p class="sub" style="margin:0">The run itself is not part of this version. It will stay disabled until a dry run on this plan is finished and not blocked,
-            and a backup of the target has been taken.</p>
+        <p class="sub" th:if="${!migration.isSplit()}">Merging into an existing database is not part of this version. Plan and dry run work; the run does not.</p>
+        <p class="sub" th:if="${migration.isSplit() && dryRun == null}">Run the dry run first.</p>
+        <p class="sub" th:if="${migration.isSplit() && dryRun != null && dryRun.gate() == 'BLOCKED'}">The dry run is blocked. Fix what it reports and run it again.</p>
+        <p class="sub" th:if="${migration.isSplit() && dryRun != null && dryRun.gate() != 'BLOCKED' && result == null}">Copies the selected nodes and the relationships between them into a new database with the same node ids,
+            checks it against the source, and writes it as a dump file in the output directory from the settings. The source is only read, and nothing existing is overwritten.
+            This has not been checked on a copy of your real database yet — try it on a copy first.</p>
+        <th:block th:if="${result != null}">
+            <p><span class="badge ok">DONE</span> <span class="muted" th:text="${' · finished ' + @fmt.time(T(java.time.Instant).parse(result.finishedAt()))}"></span></p>
+            <div class="stats">
+                <div class="stat"><div class="l">Nodes copied</div><div class="big" th:text="${@fmt.number(result.nodes())}"></div></div>
+                <div class="stat"><div class="l">Relationships copied</div><div class="big" th:text="${@fmt.number(result.relationships())}"></div></div>
+                <div class="stat"><div class="l">Left out (go outside)</div><div class="big" th:text="${@fmt.number(result.relationshipsToOutside())}"></div></div>
+                <div class="stat"><div class="l">Indexes · constraints</div><div class="big" th:text="${result.schemaStatements()}"></div></div>
+            </div>
+            <table class="kv" style="margin-top:12px">
+                <tbody>
+                <tr><td>Dump file</td><td class="mono" th:text="${result.outputFile()}"></td></tr>
+                <tr><td>Size</td><td th:text="${@fmt.number(result.outputBytes())} + ' bytes'"></td></tr>
+                <tr><td>Checked</td><td>Every node id, label and property, and every relationship, was read back and compared with the source<span th:if="${result.consistencyChecked()}">; the store passed <span class="mono">neo4j-admin database check</span></span>.</td></tr>
+                <tr><td>Written after the import</td><td th:text="${result.propertiesWrittenAfter() + ' properties the CSV import cannot carry (empty lists and dates with a named time zone)'}"></td></tr>
+                </tbody>
+            </table>
+            <p class="hint">Relationship ids in the new database are new; node ids are the same as in the source.</p>
+        </th:block>
     </div>
 
     <!-- Log -->

@@ -43,13 +43,17 @@ public class MigrationStore {
     }
 
     public void planned(long id, String planJson) {
-        jdbc.sql("UPDATE migrations SET state = 'PLANNED', plan_json = ?, dry_run_id = NULL, last_error = NULL WHERE id = ?")
+        jdbc.sql("UPDATE migrations SET state = 'PLANNED', plan_json = ?, dry_run_id = NULL, run_json = NULL, last_error = NULL WHERE id = ?")
                 .params(planJson, id).update();
     }
 
     public void dryRunDone(long id, long dryRunId) {
-        jdbc.sql("UPDATE migrations SET state = 'DRY_RUN_DONE', dry_run_id = ?, last_error = NULL WHERE id = ?")
+        jdbc.sql("UPDATE migrations SET state = 'DRY_RUN_DONE', dry_run_id = ?, run_json = NULL, last_error = NULL WHERE id = ?")
                 .params(dryRunId, id).update();
+    }
+
+    public void ran(long id, String runJson) {
+        jdbc.sql("UPDATE migrations SET state = 'RUN_DONE', run_json = ?, last_error = NULL WHERE id = ?").params(runJson, id).update();
     }
 
     /** A job failed: go back to the state before it and keep the reason. */
@@ -64,7 +68,9 @@ public class MigrationStore {
                 .param(reason).update();
         int dryRunning = jdbc.sql("UPDATE migrations SET state = 'PLANNED', last_error = ? WHERE state = 'DRY_RUNNING'")
                 .param(reason).update();
-        return planning + dryRunning;
+        int running = jdbc.sql("UPDATE migrations SET state = 'DRY_RUN_DONE', last_error = ? WHERE state = 'RUNNING'")
+                .param(reason).update();
+        return planning + dryRunning + running;
     }
 
     private static Migration map(java.sql.ResultSet rs, int n) throws java.sql.SQLException {
@@ -74,7 +80,7 @@ public class MigrationStore {
         Long dryRun = rs.wasNull() ? null : dryRunId;
         return new Migration(rs.getLong("id"), rs.getString("name"), rs.getLong("source_id"), target,
                 rs.getString("source_name"), rs.getString("target_name"), rs.getString("selection_yaml"),
-                Migration.State.valueOf(rs.getString("state")), rs.getString("plan_json"), dryRun, rs.getString("last_error"),
+                Migration.State.valueOf(rs.getString("state")), rs.getString("plan_json"), dryRun, rs.getString("run_json"), rs.getString("last_error"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
     }
 }

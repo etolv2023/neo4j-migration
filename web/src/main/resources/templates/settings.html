@@ -26,6 +26,14 @@
             <div><label for="tempHeap">Memory for it: heap</label><input id="tempHeap" name="tempHeap" type="text" th:value="${settings.tempHeap()}"></div>
             <div><label for="tempPageCache">Memory for it: page cache</label><input id="tempPageCache" name="tempPageCache" type="text" th:value="${settings.tempPageCache()}"></div>
         </div>
+        <h2 style="margin-top:26px">Splitting</h2>
+        <div class="row">
+            <div><label for="outputDir">Output directory</label><input id="outputDir" name="outputDir" type="text" th:value="${settings.outputDir()}">
+                <p class="hint">The dump files that a split writes are put here. An existing file is never overwritten.</p></div>
+        </div>
+        <label class="check"><input type="checkbox" name="copySchema" value="true" th:checked="${settings.copySchema()}"> Create the same indexes and constraints in the new database</label>
+        <label class="check"><input type="checkbox" name="checkAfterBuild" value="true" th:checked="${settings.checkAfterBuild()}"> Check the new database (<span class="mono">neo4j-admin database check</span>) before dumping it</label>
+        <p class="hint">The check is thorough and can take a long time on a big database. The comparison with the source always runs.</p>
         <h2 style="margin-top:26px">Defaults for dry runs</h2>
         <div class="row">
             <div><label for="orgProperty">Organisation property</label><input id="orgProperty" name="orgProperty" type="text" th:value="${settings.orgProperty()}">

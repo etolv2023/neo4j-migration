@@ -35,12 +35,14 @@ public class SettingsController {
 
     @PostMapping("/settings")
     String save(@RequestParam Runner runner, @RequestParam(defaultValue = "") String dockerImage,
-                @RequestParam(defaultValue = "") String neo4jHome, @RequestParam String workDir,
+                @RequestParam(defaultValue = "") String neo4jHome, @RequestParam String workDir, @RequestParam String outputDir,
+                @RequestParam(defaultValue = "false") boolean copySchema, @RequestParam(defaultValue = "false") boolean checkAfterBuild,
                 @RequestParam String tempHeap, @RequestParam String tempPageCache, @RequestParam int startTimeoutMinutes,
                 @RequestParam String orgProperty, @RequestParam int batchSize, @RequestParam int sampleSize,
                 @RequestParam(defaultValue = "false") boolean analyseRelationships, RedirectAttributes redirect) {
         try {
-            settings.save(new AppSettings(runner, dockerImage.strip(), neo4jHome.strip(), workDir.strip(), tempHeap.strip(),
+            settings.save(new AppSettings(runner, dockerImage.strip(), neo4jHome.strip(), workDir.strip(), outputDir.strip(), copySchema,
+                    checkAfterBuild, tempHeap.strip(),
                     tempPageCache.strip(), startTimeoutMinutes, orgProperty.strip(), batchSize, sampleSize, analyseRelationships));
             audit.record("settings_save", null);
             redirect.addFlashAttribute("message", "Settings saved");

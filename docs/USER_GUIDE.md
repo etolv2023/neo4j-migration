@@ -1,7 +1,9 @@
 # User guide
 
-This guide covers the dashboard and the command line of version 0.1 (**read-only**: it plans and dry-runs, it does not yet
-write any database). Section 9 lists exactly what is and is not available.
+This guide covers the dashboard and the command line of this version. **Split** (copy some organisations, ids or labels into a
+new database, written as a dump file) is available and marked *experimental* until you have tried it on a copy of your real
+data. **Merge** into an existing database is not available yet: it plans and dry-runs only. Section 9 lists exactly what is
+and is not available.
 
 Contents: 1 What the tool does · 2 Install and start · 3 The flow · 4 Giving it a database · 5 Choosing what to move ·
 6 Plan, dry run and reading the report · 7 Settings · 8 Logs and users · 9 What is not available yet · 10 Command line ·
@@ -55,9 +57,11 @@ reverse proxy with TLS; the dashboard has no TLS of its own.
    move (section 5).
 3. **Plan** — counts what the selection contains and lists the steps and warnings.
 4. **Dry run** — compares every selected id with the target and classifies the relationships. Result: CLEAR, WARN or BLOCKED.
-5. **Run** — *not available in this version* (section 9).
+5. **Run** — for a split (no *To*): builds the new database and writes it as a dump file (section 6a). A merge cannot be run yet
+   (section 9).
 
-The migration page shows these as a stepper with the log underneath. Nothing you do before Run changes a database.
+The migration page shows these as a stepper with the log underneath. Plan and dry run change nothing. A run reads the source and
+writes only new files in the work directory and the output directory; it never writes to the source.
 
 ## 4. Giving it a database
 
@@ -157,6 +161,40 @@ later, so a clash on real data usually means exactly that: the report shows what
 
 Download the full report as JSON from its page.
 
+## 6a. Running a split
+
+A split needs a finished dry run that is not BLOCKED. Press **Run the split** on the migration page. The tool then:
+
+1. reads the ids of the selected nodes from the source (read only);
+2. exports the selected nodes and the relationships *between* them as CSV files, with exact value types (numbers, text,
+   dates, durations, points, lists, bytes);
+3. builds a new database with `neo4j-admin database import full --id-type=actual`, so **node ids are the same**;
+4. starts a throw-away server on it to write what the import cannot carry (empty lists and dates with a named time zone),
+   and to create the same indexes and constraints as the source;
+5. reads the new database back and compares it with the export: the set of ids, the counts, and a hash over every node
+   (id, labels, properties with their types) and every relationship (ends, type, properties). Any difference fails the run;
+6. optionally runs `neo4j-admin database check` on the new store;
+7. writes the database as a dump file in the **output directory** (settings). An existing file is never overwritten; the name is
+   `<migration name>-<id>-<date-time>.dump`. The temporary files and servers are removed whether it succeeds or fails.
+
+Load the dump into a Neo4j of the same version with `neo4j-admin database load`. The result card shows the file, its size,
+how many nodes and relationships were copied and how many relationships were left out because they lead to a node that is not
+selected.
+
+Things to know:
+
+- **Relationship ids change** (node ids do not). Relationships between selected nodes are copied; relationships to nodes outside
+  the selection are not, and the dry run warns about them.
+- The size of the new store depends on the **highest node id** selected, not on how many nodes there are: the node store has a
+  slot for every id up to the highest one. Splitting a few nodes whose ids are near the top of a huge database makes a large
+  store full of unused slots. This is how Neo4j stores ids; it is not a bug of the tool.
+- The comparison covers what the export carries. A relationship property that the CSV import cannot carry (an empty list or a
+  named-zone date on a relationship) stops the run with a clear message instead of copying it wrongly.
+- Property names with `:` or parentheses, and list values that contain the character U+001F, are not supported and stop the run.
+- Memory: the ids of the selection are held in memory (8 bytes each).
+- The run is **experimental**. It has been tested against Neo4j 5.26.29 on synthetic data with awkward values (see
+  `docs/RESULTS.md`); try it on a copy of your real database first and compare the result yourself.
+
 ## 7. Settings
 
 | Setting | What it does |
@@ -165,6 +203,9 @@ Download the full report as JSON from its page.
 | Docker image | e.g. `neo4j:5.26.29-community`. Needs the `docker` command and permission to use it. |
 | Neo4j installation directory | for the installation option, e.g. `/opt/neo4j`. Its own config and logs are not used or changed. |
 | Work directory | where temporary databases are made; deleted when a job ends |
+| Output directory | where the dump files of a split are written |
+| Create the same indexes and constraints | on by default; switch off to build the new database without them |
+| Check the new database | on by default; runs `neo4j-admin database check` before dumping. Thorough, and slow on a big database. |
 | Heap / page cache | memory of the temporary server (default 1g each); raise for big dumps |
 | Wait up to (minutes) | how long a temporary server may take to start |
 | Organisation property | default for new migrations |
@@ -187,11 +228,12 @@ restarts while a job is running, that job is marked as interrupted.
 
 Be clear about this before relying on the tool:
 
-- **Run is not available.** The button is disabled. Splitting (export, build a new database with ids kept, consistency check)
-  and merging (mandatory backup, build, check, swap, rollback) are the next stages and will be delivered with their own tests.
-  Until then nothing in this tool writes to a database.
-- Validated on synthetic data (3 million nodes in the benchmark), not yet on a copy of your real database. Run a plan and a
-  dry run on a copy and read the samples before trusting a number.
+- **Merge cannot be run.** Merging into an existing database (mandatory backup, build, check, swap, rollback) is the next
+  stage. Plan and dry run work for a merge; the Run button does not. Nothing in this tool writes to an existing database.
+- **Split is experimental.** It is covered by integration tests that compare every node and relationship, but it has not been
+  tried on a copy of your real database.
+- Validated on synthetic data (3 million nodes in the benchmark for the dry run), not yet on a copy of your real database.
+  Run a plan and a dry run on a copy and read the samples before trusting a number.
 - Only Neo4j 5.26 Community was tested.
 - One kind of user (admin); no roles.
 

@@ -3,6 +3,7 @@ package com.etolv.neo4jtool.web;
 import com.etolv.neo4jtool.engine.Json;
 import com.etolv.neo4jtool.engine.dryrun.DryRunReport;
 import com.etolv.neo4jtool.engine.selection.SelectionConfigParser;
+import com.etolv.neo4jtool.engine.split.SplitResult;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -89,6 +90,7 @@ public class MigrationsController {
         model.addAttribute("progress", jobs.progress(id));
         model.addAttribute("log", jobLog.forScope(migration.scope(), 300));
         model.addAttribute("dryRun", migration.dryRunId() == null ? null : reports.find(migration.dryRunId()).orElse(null));
+        model.addAttribute("result", migration.runJson() == null ? null : Json.read(migration.runJson(), SplitResult.class));
         if (migration.state().busy()) {
             model.addAttribute("refresh", 3);
         }
@@ -103,6 +105,11 @@ public class MigrationsController {
     @PostMapping("/migrations/{id}/dry-run")
     String dryRun(@PathVariable long id, RedirectAttributes redirect) {
         return start(id, redirect, jobs::startDryRun);
+    }
+
+    @PostMapping("/migrations/{id}/run")
+    String run(@PathVariable long id, RedirectAttributes redirect) {
+        return start(id, redirect, jobs::startRun);
     }
 
     @PostMapping("/migrations/{id}/delete")

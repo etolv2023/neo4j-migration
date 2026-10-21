@@ -20,6 +20,16 @@ public final class SelectionQueryBuilder {
         return new CypherQuery(text, params(config));
     }
 
+    /** One row per selected node with only its id. */
+    public static CypherQuery idStream(SelectionConfig config) {
+        return new CypherQuery(matchAndWhere(config) + " RETURN id(n) AS id", params(config));
+    }
+
+    /** How many nodes are selected and the highest id among them (null when none is). */
+    public static CypherQuery nodeStats(SelectionConfig config) {
+        return new CypherQuery(matchAndWhere(config) + " RETURN count(n) AS c, max(id(n)) AS maxId", params(config));
+    }
+
     public static CypherQuery nodeCount(SelectionConfig config) {
         return new CypherQuery(matchAndWhere(config) + " RETURN count(n) AS c", params(config));
     }
