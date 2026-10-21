@@ -30,6 +30,10 @@ final class Phases {
         }
     }
 
+    DryRunProgress progress() {
+        return progress;
+    }
+
     List<Phase> all() {
         finish();
         return phases;

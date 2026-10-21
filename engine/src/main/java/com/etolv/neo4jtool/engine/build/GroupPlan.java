@@ -23,6 +23,18 @@ final class GroupPlan {
         conflicts = null;
     }
 
+    void merge(GroupPlan other) {
+        other.typesByKey.forEach((key, types) -> typesByKey.computeIfAbsent(key, k -> new TreeSet<>()).addAll(types));
+        plain = null;
+        conflicts = null;
+    }
+
+    /** Computes what is cached, so that readers on several threads only read. */
+    void freeze() {
+        plainKeys();
+        conflictKeys();
+    }
+
     /** Names that have exactly one type, in a fixed order. */
     List<String> plainKeys() {
         if (plain == null) {

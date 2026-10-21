@@ -4,7 +4,6 @@ import com.etolv.neo4jtool.engine.conn.Neo4jClient;
 import com.etolv.neo4jtool.engine.selection.CypherQuery;
 import com.etolv.neo4jtool.engine.selection.SelectionConfig;
 import com.etolv.neo4jtool.engine.selection.SelectionQueryBuilder;
-import it.unimi.dsi.fastutil.longs.LongArrayList;
 import org.neo4j.driver.Record;
 import org.neo4j.driver.Result;
 import org.neo4j.driver.Session;
@@ -25,7 +24,7 @@ final class Ids {
     }
 
     private static IdSet read(Neo4jClient client, String text, java.util.Map<String, Object> params) {
-        LongArrayList ids = new LongArrayList();
+        IdSet.Collector ids = new IdSet.Collector();
         try (Session session = client.readSession()) {
             Result result = session.run(text, params);
             while (result.hasNext()) {
@@ -33,6 +32,6 @@ final class Ids {
                 ids.add(r.get("id").asLong());
             }
         }
-        return IdSet.of(ids);
+        return ids.build();
     }
 }

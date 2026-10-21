@@ -60,42 +60,58 @@ final class DatabaseWriter implements AutoCloseable {
     }
 
     /**
-     * Writes the properties the CSV import could not carry. Each value is read from the source again and set with its
-     * exact type.
+     * Writes the properties the CSV import could not carry. The export wrote each value, with its type, to a file; they are
+     * set here in batches, several batches at a time.
      */
-    void applyFixups(Neo4jClient source, Fixups fixups) {
-        int total = fixups.size();
-        for (int from = 0; from < total; from += FIXUP_BATCH) {
-            int to = Math.min(total, from + FIXUP_BATCH);
-            Map<Long, List<String>> keysById = new LinkedHashMap<>();
-            for (int i = from; i < to; i++) {
-                keysById.computeIfAbsent(fixups.id(i), k -> new ArrayList<>()).add(fixups.key(i));
-            }
-            long[] ids = keysById.keySet().stream().mapToLong(Long::longValue).toArray();
-            List<Map<String, Object>> rows = new ArrayList<>();
-            try (Session read = source.readSession()) {
-                for (Record r : read.run("UNWIND $ids AS i MATCH (n) WHERE id(n) = i RETURN id(n) AS id, properties(n) AS props",
-                        Map.of("ids", Values.value(ids))).list()) {
-                    long id = r.get("id").asLong();
-                    Map<String, Value> props = r.get("props").asMap(v -> v);
-                    for (String key : keysById.get(id)) {
-                        Value value = props.get(key);
-                        if (value == null) {
-                            throw new BuildException("Node " + id + " no longer has the property '" + key
-                                    + "'. The source changed during the split; run it again.");
-                        }
+    void applyFixups(Fixups fixups, int threads) {
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(Math.max(1, threads));
+        try {
+            List<java.util.concurrent.Future<Long>> futures = new ArrayList<>();
+            for (java.nio.file.Path file : fixups.files()) {
+                try (java.io.BufferedReader reader = java.nio.file.Files.newBufferedReader(file, java.nio.charset.StandardCharsets.UTF_8)) {
+                    List<Map<String, Object>> rows = new ArrayList<>();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        ValueJson.Line item = ValueJson.read(line);
                         Map<String, Object> row = new HashMap<>();
-                        row.put("id", id);
-                        row.put("key", key);
-                        row.put("value", value.asObject());
+                        row.put("id", item.id());
+                        row.put("key", item.key());
+                        row.put("value", item.value().asObject());
                         rows.add(row);
+                        if (rows.size() >= FIXUP_BATCH) {
+                            futures.add(pool.submit(write(rows)));
+                            rows = new ArrayList<>();
+                            // keep a few batches in flight, not the whole file
+                            while (futures.size() > threads * 4L) {
+                                futures.remove(0).get();
+                            }
+                        }
                     }
+                    if (!rows.isEmpty()) {
+                        futures.add(pool.submit(write(rows)));
+                    }
+                } catch (java.io.IOException e) {
+                    throw new BuildException("Could not read " + file + ": " + e.getMessage(), e);
                 }
             }
-            if (rows.size() != to - from) {
-                throw new BuildException("Some nodes that need a property written afterwards are gone from the source. "
-                        + "The source changed during the split; run it again.");
+            for (java.util.concurrent.Future<Long> future : futures) {
+                future.get();
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BuildException("Interrupted while writing properties afterwards", e);
+        } catch (java.util.concurrent.ExecutionException e) {
+            if (e.getCause() instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw new BuildException("Writing properties afterwards failed: " + e.getCause(), e.getCause());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private java.util.concurrent.Callable<Long> write(List<Map<String, Object>> rows) {
+        return () -> {
             try (Session session = session()) {
                 long set = session.executeWrite(tx -> tx.run(
                         "UNWIND $rows AS row MATCH (n) WHERE id(n) = row.id SET n[row.key] = row.value RETURN count(*) AS c",
@@ -103,8 +119,9 @@ final class DatabaseWriter implements AutoCloseable {
                 if (set != rows.size()) {
                     throw new BuildException("Writing properties afterwards matched " + set + " nodes instead of " + rows.size());
                 }
+                return set;
             }
-        }
+        };
     }
 
     /** Runs the statements, one by one, and waits until every index is online. */

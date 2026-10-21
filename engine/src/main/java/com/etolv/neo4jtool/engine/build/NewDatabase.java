@@ -15,10 +15,6 @@ import java.util.function.Consumer;
  */
 final class NewDatabase {
 
-    /** Properties the import could not carry and the database they are read from again. */
-    record FixupSource(Neo4jClient client, Fixups fixups) {
-    }
-
     private NewDatabase() {
     }
 
@@ -28,18 +24,19 @@ final class NewDatabase {
      * @param schema indexes and constraints to create, as statements (may be empty)
      */
     static void build(InstanceRunner runner, Path csv, Path data, String database, List<String> nodeFiles,
-                      List<String> relationshipFiles, List<FixupSource> fixups, List<String> schema,
-                      Verifier.Expected expected, boolean check, Phases phases, Consumer<String> log) {
+                      List<String> relationshipFiles, List<Fixups> fixups, List<String> schema,
+                      Verifier.Expected expected, BuildOptions options, Phases phases, Consumer<String> log) {
         phases.start("Building the new database with neo4j-admin import (ids kept)");
-        runner.importDatabase(data, database, new ImportFiles(csv, nodeFiles, relationshipFiles, ValueCodec.ARRAY_DELIMITER), log);
+        runner.importDatabase(data, database, new ImportFiles(csv, nodeFiles, relationshipFiles, ValueCodec.ARRAY_DELIMITER,
+                options.importThreads(), options.importMemory()), log);
 
         phases.start("Finishing the new database on a temporary server");
         try (RunningInstance server = runner.serveDataDirectory(data, database, log)) {
             try (DatabaseWriter writer = new DatabaseWriter(server.boltUri(), database)) {
-                for (FixupSource source : fixups) {
-                    if (source.fixups().size() > 0) {
-                        log.accept("Writing " + source.fixups().size() + " properties the import cannot carry");
-                        writer.applyFixups(source.client(), source.fixups());
+                for (Fixups part : fixups) {
+                    if (part.size() > 0) {
+                        log.accept("Writing " + part.size() + " properties the import cannot carry");
+                        writer.applyFixups(part, options.workers());
                     }
                 }
                 if (!schema.isEmpty()) {
@@ -50,12 +47,12 @@ final class NewDatabase {
             phases.start("Comparing the new database with the exported data");
             try (Neo4jClient built = new Neo4jClient(new ConnectionSettings(server.boltUri(), null, null, database))) {
                 built.verify();
-                Verifier.verify(built, expected);
+                Verifier.verify(CsvExporter.bolt(built), expected, options.batchSize(), options.workers(), phases.progress());
             }
             phases.start("Stopping the temporary server");
         }
 
-        if (check) {
+        if (options.checkConsistency()) {
             phases.start("Checking the store (neo4j-admin database check)");
             UnusedRecords unused = new UnusedRecords(log);
             runner.checkDatabase(data, database, unused);

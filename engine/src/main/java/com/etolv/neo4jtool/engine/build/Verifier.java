@@ -1,11 +1,8 @@
 package com.etolv.neo4jtool.engine.build;
 
-import com.etolv.neo4jtool.engine.conn.Neo4jClient;
+import com.etolv.neo4jtool.engine.dryrun.DryRunProgress;
 import java.util.List;
 import java.util.Map;
-import org.neo4j.driver.Record;
-import org.neo4j.driver.Result;
-import org.neo4j.driver.Session;
 import org.neo4j.driver.Value;
 
 /**
@@ -13,15 +10,15 @@ import org.neo4j.driver.Value;
  * and, over everything about every node and relationship, the same fingerprint. A value that changed type or
  * content on the way would show up here.
  */
-final class Verifier {
+public final class Verifier {
 
     private Verifier() {
     }
 
     /** What the new database must contain: its node ids, and the totals of everything that was exported. */
-    record Expected(IdSet ids, long nodes, long relationships, long nodeFingerprint, long relationshipFingerprint) {
+    public record Expected(IdSet ids, long nodes, long relationships, long nodeFingerprint, long relationshipFingerprint) {
 
-        static Expected of(IdSet ids, CsvExporter.Export... exports) {
+        public static Expected of(IdSet ids, CsvExporter.Export... exports) {
             long nodes = 0;
             long relationships = 0;
             long nodeHash = 0;
@@ -36,55 +33,70 @@ final class Verifier {
         }
     }
 
-    static void verify(Neo4jClient built, Expected expected) {
-        IdSet ids = expected.ids();
-        long nodes = 0;
-        long nodeHash = 0;
-        long unexpected = 0;
-        long firstUnexpected = -1;
-        try (Session session = built.readSession()) {
-            Result result = session.run("MATCH (n) RETURN id(n) AS id, labels(n) AS labels, properties(n) AS props");
-            while (result.hasNext()) {
-                Record r = result.next();
-                long id = r.get("id").asLong();
-                if (!ids.contains(id)) {
-                    if (unexpected++ == 0) {
-                        firstUnexpected = id;
-                    }
-                }
-                List<String> labels = r.get("labels").asList(Value::asString);
-                Map<String, Value> props = r.get("props").asMap(v -> v);
+    /**
+     * Reads every expected node and its relationships back, on {@code workers} threads, and compares them with what the
+     * export wrote. The database must hold exactly those nodes and relationships: its own counts are compared as well, so
+     * a node or relationship nobody asked for cannot hide.
+     */
+    public static void verify(CsvExporter.Source built, Expected expected, int batchSize, int workers, DryRunProgress progress) {
+        long inDatabase = built.nodeCount();
+        if (inDatabase != expected.nodes()) {
+            throw new BuildException("The new database has " + inDatabase + " nodes but " + expected.nodes()
+                    + " were exported. It has been discarded.");
+        }
+        long relationshipsInDatabase = built.relationshipCount();
+        if (relationshipsInDatabase != expected.relationships()) {
+            throw new BuildException("The new database has " + relationshipsInDatabase + " relationships but "
+                    + expected.relationships() + " were exported. It has been discarded.");
+        }
+
+        Scanner scanner = new Scanner(built, expected.ids(), List.of(CsvExporter.Rule.out(expected.ids())), batchSize, workers, progress);
+        List<Scanner.Part<long[]>> parts = scanner.run(worker -> new Scanner.Sink<long[]>() {
+            private long nodes;
+            private long nodeHash;
+            private long relationships;
+            private long relationshipHash;
+
+            @Override
+            public void accept(long id, List<String> labels, Map<String, Value> props) {
                 nodeHash += Fingerprint.node(id, labels, props);
                 nodes++;
             }
-        }
-        if (unexpected > 0) {
-            throw new BuildException("The new database has " + unexpected + " nodes whose ids were not selected (the first is "
-                    + firstUnexpected + "). It is not what was asked for and has been discarded.");
+
+            @Override
+            public void accept(long start, long end, String type, long relationshipId, Map<String, Value> props) {
+                relationshipHash += Fingerprint.relationship(start, end, type, props);
+                relationships++;
+            }
+
+            @Override
+            public long[] finish() {
+                return new long[] {nodes, nodeHash, relationships, relationshipHash};
+            }
+        });
+        long nodes = 0;
+        long nodeHash = 0;
+        long relationships = 0;
+        long relationshipHash = 0;
+        long outside = 0;
+        for (Scanner.Part<long[]> part : parts) {
+            nodes += part.result()[0];
+            nodeHash += part.result()[1];
+            relationships += part.result()[2];
+            relationshipHash += part.result()[3];
+            outside += part.outside();
         }
         if (nodes != expected.nodes()) {
-            throw new BuildException("The new database has " + nodes + " nodes but " + expected.nodes()
-                    + " were exported. It has been discarded.");
+            throw new BuildException("The new database has " + nodes + " of the " + expected.nodes()
+                    + " nodes that were exported. It has been discarded.");
         }
         if (nodeHash != expected.nodeFingerprint()) {
             throw new BuildException("The nodes of the new database differ from the ones that were exported (labels or "
                     + "properties changed on the way). It has been discarded.");
         }
-
-        long relationships = 0;
-        long relationshipHash = 0;
-        try (Session session = built.readSession()) {
-            Result result = session.run("MATCH (a)-[r]->(b) RETURN id(a) AS a, id(b) AS b, type(r) AS type, properties(r) AS props");
-            while (result.hasNext()) {
-                Record r = result.next();
-                relationshipHash += Fingerprint.relationship(r.get("a").asLong(), r.get("b").asLong(), r.get("type").asString(),
-                        r.get("props").asMap(v -> v));
-                relationships++;
-            }
-        }
-        if (relationships != expected.relationships()) {
-            throw new BuildException("The new database has " + relationships + " relationships but " + expected.relationships()
-                    + " were exported. It has been discarded.");
+        if (outside > 0 || relationships != expected.relationships()) {
+            throw new BuildException("The new database has " + (relationships + outside) + " relationships between these nodes "
+                    + "but " + expected.relationships() + " were exported. It has been discarded.");
         }
         if (relationshipHash != expected.relationshipFingerprint()) {
             throw new BuildException("The relationships of the new database differ from the ones that were exported. "

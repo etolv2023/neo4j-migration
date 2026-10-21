@@ -1,40 +1,43 @@
 package com.etolv.neo4jtool.engine.build;
 
-import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.longs.LongArrayList;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
- * Node properties that the CSV import cannot carry exactly. Only (node id, property name) is kept; the value is read
- * from the source again when the second pass writes it.
+ * Node properties that the CSV import cannot carry exactly (empty lists, date-times with a named time zone). The export
+ * writes each one, with its value, to a file of JSON lines; they are set on the finished database afterwards. Only the
+ * count and the file names are kept in memory.
  */
-final class Fixups {
+public final class Fixups {
 
-    private final LongArrayList ids = new LongArrayList();
-    private final IntArrayList keyIndex = new IntArrayList();
-    private final List<String> keys = new ArrayList<>();
-    private final Map<String, Integer> index = new HashMap<>();
+    private final long count;
+    private final List<Path> files;
 
-    void add(long nodeId, String key) {
-        ids.add(nodeId);
-        keyIndex.add(index.computeIfAbsent(key, k -> {
-            keys.add(k);
-            return keys.size() - 1;
-        }));
+    public Fixups(long count, List<Path> files) {
+        this.count = count;
+        this.files = List.copyOf(files);
     }
 
-    int size() {
-        return ids.size();
+    static Fixups none() {
+        return new Fixups(0, List.of());
     }
 
-    long id(int i) {
-        return ids.getLong(i);
+    static Fixups of(List<Fixups> parts) {
+        long total = 0;
+        List<Path> files = new ArrayList<>();
+        for (Fixups part : parts) {
+            total += part.count;
+            files.addAll(part.files);
+        }
+        return new Fixups(total, files);
     }
 
-    String key(int i) {
-        return keys.get(keyIndex.getInt(i));
+    public long size() {
+        return count;
+    }
+
+    public List<Path> files() {
+        return files;
     }
 }

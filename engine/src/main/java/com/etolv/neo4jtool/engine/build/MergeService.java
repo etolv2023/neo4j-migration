@@ -138,12 +138,12 @@ public final class MergeService {
 
         Path csv = workspace.directory("csv");
         phases.start("Exporting the target to CSV");
-        CsvExporter.Export targetExport = new CsvExporter(target, targetIds, List.of(CsvExporter.Rule.out(targetIds)), "target-",
-                csv, build.batchSize(), progress).export();
+        CsvExporter.Export targetExport = new CsvExporter(CsvExporter.bolt(target), targetIds,
+                List.of(CsvExporter.Rule.out(targetIds)), "target-", csv, build.batchSize(), build.workers(), progress).export();
         phases.start("Exporting the nodes to restore to CSV");
-        CsvExporter.Export restoredExport = new CsvExporter(source, missing,
+        CsvExporter.Export restoredExport = new CsvExporter(CsvExporter.bolt(source), missing,
                 List.of(CsvExporter.Rule.out(allowedEnds), CsvExporter.Rule.in(confirmed)), "restored-", csv, build.batchSize(),
-                progress).export();
+                build.workers(), progress).export();
         log.accept(restoredExport.nodes() + " nodes and " + restoredExport.relationships() + " relationships restored; "
                 + restoredExport.relationshipsToOutside() + " relationships left out because their other end is not on the target");
 
@@ -153,10 +153,9 @@ public final class MergeService {
         List<String> relationshipFiles = new ArrayList<>(targetExport.relationshipFiles());
         relationshipFiles.addAll(restoredExport.relationshipFiles());
         NewDatabase.build(runner, csv, workspace.directory("data"), database, nodeFiles, relationshipFiles,
-                List.of(new NewDatabase.FixupSource(target, targetExport.fixups()),
-                        new NewDatabase.FixupSource(source, restoredExport.fixups())),
+                List.of(targetExport.fixups(), restoredExport.fixups()),
                 schema, Verifier.Expected.of(IdSet.union(targetIds, missing), targetExport, restoredExport),
-                build.checkConsistency(), phases, log);
+                build, phases, log);
 
         Path dump = null;
         if (!swap) {
@@ -203,7 +202,7 @@ public final class MergeService {
     /** The ids (of {@code ids}) whose node on the source is not the same node as on the target: other labels or other org. */
     private static IdSet differing(Neo4jClient source, Neo4jClient target, IdSet ids, String org, int batch) {
         LongArrayList different = new LongArrayList();
-        for (int from = 0; from < ids.size(); from += batch) {
+        for (long from = 0; from < ids.size(); from += batch) {
             long[] slice = ids.slice(from, Math.min(ids.size(), from + batch));
             Long2ObjectOpenHashMap<String> inSource = identities(source, slice, org);
             Long2ObjectOpenHashMap<String> inTarget = identities(target, slice, org);
@@ -222,7 +221,7 @@ public final class MergeService {
      */
     private static IdSet sameNeighbours(Neo4jClient source, Neo4jClient target, IdSet targetIds, IdSet missing, String org, int batch) {
         LongOpenHashSet neighbours = new LongOpenHashSet();
-        for (int from = 0; from < missing.size(); from += batch) {
+        for (long from = 0; from < missing.size(); from += batch) {
             long[] slice = missing.slice(from, Math.min(missing.size(), from + batch));
             try (Session session = source.readSession()) {
                 Result result = session.run("UNWIND $ids AS i MATCH (a) WHERE id(a) = i MATCH (a)--(b) RETURN DISTINCT id(b) AS id",

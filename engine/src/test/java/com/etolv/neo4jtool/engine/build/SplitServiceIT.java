@@ -142,6 +142,22 @@ class SplitServiceIT {
     }
 
     @Test
+    void severalWorkersGiveTheSameDatabaseAndTheSameFingerprintsAsOne() throws Exception {
+        Path work = Files.createDirectories(root.resolve("work-workers"));
+        InstanceRunner runner = new DockerRunner(settings(InstanceSettings.Runner.DOCKER, work, null));
+        SplitResult one = split(runner, work, root.resolve("one-worker.dump"), "org_ids: [1]", 1);
+        SplitResult four = split(runner, work, root.resolve("four-workers.dump"), "org_ids: [1]", 4);
+
+        assertMatches(runner, four, root.resolve("four-workers.dump"));
+        assertThat(four.nodes()).isEqualTo(one.nodes());
+        assertThat(four.relationships()).isEqualTo(one.relationships());
+        assertThat(four.relationshipsToOutside()).isEqualTo(one.relationshipsToOutside());
+        assertThat(four.propertiesWrittenAfter()).isEqualTo(one.propertiesWrittenAfter());
+        assertThat(four.nodeFingerprint()).isEqualTo(one.nodeFingerprint());
+        assertThat(four.relationshipFingerprint()).isEqualTo(one.relationshipFingerprint());
+    }
+
+    @Test
     void anExistingOutputFileIsNeverOverwrittenAndNothingIsStarted() throws Exception {
         Path work = Files.createDirectories(root.resolve("work-exists"));
         Path existing = Files.writeString(root.resolve("exists.dump"), "keep me");
@@ -166,8 +182,12 @@ class SplitServiceIT {
     }
 
     private SplitResult split(InstanceRunner runner, Path work, Path output, String selectionYaml) {
+        return split(runner, work, output, selectionYaml, 1);
+    }
+
+    private SplitResult split(InstanceRunner runner, Path work, Path output, String selectionYaml, int workers) {
         return new SplitService().run(source.client(), SelectionConfigParser.parse(selectionYaml), runner, work, output,
-                new BuildOptions(100, true, true), DryRunProgress.NONE, log::add);
+                new BuildOptions(100, true, true).withWorkers(workers), DryRunProgress.NONE, log::add);
     }
 
     /** Loads the dump and compares it, node by node and relationship by relationship, with the source. */

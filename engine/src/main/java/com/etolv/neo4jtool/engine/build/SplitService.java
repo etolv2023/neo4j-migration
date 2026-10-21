@@ -52,16 +52,16 @@ public final class SplitService {
             Path dumps = workspace.directory("dump");
 
             phases.start("Exporting the selection to CSV");
-            CsvExporter.Export export = new CsvExporter(source, ids, List.of(CsvExporter.Rule.out(ids)), "", csv,
-                    options.batchSize(), progress).export();
+            CsvExporter.Export export = new CsvExporter(CsvExporter.bolt(source), ids, List.of(CsvExporter.Rule.out(ids)), "", csv,
+                    options.batchSize(), options.workers(), progress).export();
             log.accept(export.nodes() + " nodes, " + export.relationships() + " relationships exported; "
                     + export.fixups().size() + " properties will be written afterwards; "
                     + export.relationshipsToOutside() + " relationships to nodes outside the selection are left out");
 
             List<String> schema = options.copySchema() ? SchemaCopy.statements(source) : List.of();
             NewDatabase.build(runner, csv, data, database, export.nodeFiles(), export.relationshipFiles(),
-                    List.of(new NewDatabase.FixupSource(source, export.fixups())), schema,
-                    Verifier.Expected.of(ids, export), options.checkConsistency(), phases, log);
+                    List.of(export.fixups()), schema,
+                    Verifier.Expected.of(ids, export), options, phases, log);
 
             phases.start("Writing the dump");
             Path dump = runner.dumpStoppedDatabase(data, database, dumps, log);
