@@ -40,6 +40,31 @@
         <label class="check"><input type="checkbox" name="copySchema" value="true" th:checked="${settings.copySchema()}"> Create the same indexes and constraints in the new database</label>
         <label class="check"><input type="checkbox" name="checkAfterBuild" value="true" th:checked="${settings.checkAfterBuild()}"> Check the new database (<span class="mono">neo4j-admin database check</span>) before dumping it</label>
         <p class="hint">The check is thorough and can take a long time on a big database. The comparison with the source always runs.</p>
+        <h2 style="margin-top:26px">Speed</h2>
+        <p class="sub">For databases with billions of nodes. Every value here changes only how fast the work goes, never what comes out.</p>
+        <label class="check"><input type="checkbox" name="fastReader" value="true" th:checked="${settings.fastReader()}"> Read dumps and stopped data directories directly (fast reader)</label>
+        <p class="hint">Loads the dump into a directory and reads the store with the Neo4j kernel on all threads, about ten times faster than asking a temporary server over Bolt. If it cannot start, or the data directory is not writable by this application's user, the temporary server is used instead and the job log says so. A running server (“live”) is always read over Bolt.</p>
+        <div class="row">
+            <div><label for="readerLib">Fast reader jars</label><input id="readerLib" name="readerLib" type="text" th:value="${settings.readerLib()}" placeholder="(next to the application)">
+                <p class="hint">The directory made by the build in <span class="mono">reader/target/lib</span>. Empty looks for it next to the application.</p></div>
+            <div><label for="readerHeap">Reader heap</label><input id="readerHeap" name="readerHeap" type="text" th:value="${settings.readerHeap()}"></div>
+            <div><label for="readerPageCache">Reader page cache</label><input id="readerPageCache" name="readerPageCache" type="text" th:value="${settings.readerPageCache()}">
+                <p class="hint">As much of the store as fits makes the scan faster.</p></div>
+        </div>
+        <div class="row">
+            <div><label for="workers">Reading threads</label><input id="workers" name="workers" type="number" min="1" max="256" th:value="${settings.workers()}">
+                <p class="hint">Threads that read the source and write the CSV files at the same time.</p></div>
+            <div><label for="importThreads">Import threads</label><input id="importThreads" name="importThreads" type="number" min="0" th:value="${settings.importThreads()}">
+                <p class="hint">0 = one per core.</p></div>
+            <div><label for="importMemory">Import memory</label><input id="importMemory" name="importMemory" type="text" th:value="${settings.importMemory()}" placeholder="(neo4j-admin decides)">
+                <p class="hint">For example 24g. Leave room for the operating system.</p></div>
+        </div>
+        <div class="row">
+            <div><label for="idSetMemoryMb">Memory for the selected ids (MB)</label><input id="idSetMemoryMb" name="idSetMemoryMb" type="number" min="16" th:value="${settings.idSetMemoryMb()}">
+                <p class="hint">Past this the ids are kept in a file on disk and read back from there.</p></div>
+            <div><label for="maxJobs">Migrations at the same time</label><input id="maxJobs" name="maxJobs" type="number" min="1" max="64" th:value="${settings.maxJobs()}">
+                <p class="hint">Each one needs its own disk space and memory.</p></div>
+        </div>
         <h2 style="margin-top:26px">Defaults for dry runs</h2>
         <div class="row">
             <div><label for="orgProperty">Organisation property</label><input id="orgProperty" name="orgProperty" type="text" th:value="${settings.orgProperty()}">

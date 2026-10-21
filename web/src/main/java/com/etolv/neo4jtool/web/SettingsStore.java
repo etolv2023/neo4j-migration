@@ -37,7 +37,16 @@ public class SettingsStore {
                 Boolean.parseBoolean(rows.getOrDefault("include_neighbours", String.valueOf(d.includeNeighbours()))),
                 Integer.parseInt(rows.getOrDefault("batch_size", String.valueOf(d.batchSize()))),
                 Integer.parseInt(rows.getOrDefault("sample_size", String.valueOf(d.sampleSize()))),
-                Boolean.parseBoolean(rows.getOrDefault("analyse_relationships", String.valueOf(d.analyseRelationships()))));
+                Boolean.parseBoolean(rows.getOrDefault("analyse_relationships", String.valueOf(d.analyseRelationships()))),
+                Boolean.parseBoolean(rows.getOrDefault("fast_reader", String.valueOf(d.fastReader()))),
+                rows.getOrDefault("reader_lib", d.readerLib()),
+                rows.getOrDefault("reader_heap", d.readerHeap()),
+                rows.getOrDefault("reader_page_cache", d.readerPageCache()),
+                Integer.parseInt(rows.getOrDefault("workers", String.valueOf(d.workers()))),
+                Integer.parseInt(rows.getOrDefault("import_threads", String.valueOf(d.importThreads()))),
+                rows.getOrDefault("import_memory", d.importMemory()),
+                Integer.parseInt(rows.getOrDefault("id_set_memory_mb", String.valueOf(d.idSetMemoryMb()))),
+                Integer.parseInt(rows.getOrDefault("max_jobs", String.valueOf(d.maxJobs()))));
     }
 
     /** @throws IllegalArgumentException when a value cannot work */
@@ -60,6 +69,15 @@ public class SettingsStore {
         put("batch_size", String.valueOf(s.batchSize()));
         put("sample_size", String.valueOf(s.sampleSize()));
         put("analyse_relationships", String.valueOf(s.analyseRelationships()));
+        put("fast_reader", String.valueOf(s.fastReader()));
+        put("reader_lib", s.readerLib() == null ? "" : s.readerLib());
+        put("reader_heap", s.readerHeap());
+        put("reader_page_cache", s.readerPageCache());
+        put("workers", String.valueOf(s.workers()));
+        put("import_threads", String.valueOf(s.importThreads()));
+        put("import_memory", s.importMemory() == null ? "" : s.importMemory());
+        put("id_set_memory_mb", String.valueOf(s.idSetMemoryMb()));
+        put("max_jobs", String.valueOf(s.maxJobs()));
     }
 
     private static void validate(AppSettings s) {
@@ -84,9 +102,28 @@ public class SettingsStore {
         if (s.batchSize() < 100) {
             throw new IllegalArgumentException("Ids per query must be at least 100");
         }
+        if (s.workers() < 1 || s.workers() > 256) {
+            throw new IllegalArgumentException("Reading threads must be between 1 and 256");
+        }
+        if (s.importThreads() < 0 || s.importThreads() > 1024) {
+            throw new IllegalArgumentException("Import threads must be between 0 and 1024");
+        }
+        if (s.idSetMemoryMb() < 16) {
+            throw new IllegalArgumentException("Memory for the selected ids must be at least 16 MB");
+        }
+        if (s.maxJobs() < 1 || s.maxJobs() > 64) {
+            throw new IllegalArgumentException("Migrations at the same time must be between 1 and 64");
+        }
+        if (s.fastReader() && (blank(s.readerHeap()) || blank(s.readerPageCache()))) {
+            throw new IllegalArgumentException("Give the heap and the page cache of the fast reader, for example 2g");
+        }
         if (s.sampleSize() < 0 || s.startTimeoutMinutes() < 1) {
             throw new IllegalArgumentException("Examples must not be negative and the start timeout must be at least 1 minute");
         }
+    }
+
+    private static boolean blank(String value) {
+        return value == null || value.isBlank();
     }
 
     private void put(String name, String value) {

@@ -338,11 +338,19 @@ class WebIT {
         mvc.perform(settingsForm("LOCAL", "", "org_id", "500").with(ADMIN).with(csrf()))
                 .andExpect(flash().attribute("error", containsString("installation")));
         assertThat(settings.get().batchSize()).isEqualTo(10_000);
+        mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "500").param("workers", "0").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("Reading threads")));
+        mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "500").param("maxJobs", "0").with(ADMIN).with(csrf()))
+                .andExpect(flash().attribute("error", containsString("at the same time")));
 
         mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "company_id", "500").with(ADMIN).with(csrf()))
                 .andExpect(flash().attribute("message", "Settings saved"));
         assertThat(settings.get().orgProperty()).isEqualTo("company_id");
         assertThat(settings.get().batchSize()).isEqualTo(500);
+        assertThat(settings.get().workers()).isEqualTo(3);
+        assertThat(settings.get().importThreads()).isEqualTo(2);
+        assertThat(settings.get().readerPageCache()).isEqualTo("256m");
+        assertThat(settings.get().fastReader()).isTrue();
         assertThat(settings.get().includeNeighbours()).as("the form had the box unticked").isFalse();
         mvc.perform(get("/migrations/new").with(ADMIN))
                 .andExpect(content().string(org.hamcrest.Matchers.not(containsString("name=\"includeNeighbours\" value=\"true\" checked"))));
@@ -422,8 +430,10 @@ class WebIT {
         mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(status().isOk())
                 .andExpect(content().string(containsString(result.outputFile())))
                 .andExpect(content().string(containsString("Relationship ids in the new database are new")));
-        assertThat(jdbc.sql("SELECT message FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list())
-                .anyMatch(m -> m.startsWith("Run finished"));
+        List<String> splitLog = jdbc.sql("SELECT message FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list();
+        assertThat(splitLog).anyMatch(m -> m.startsWith("Run finished"));
+        assertThat(splitLog).as("the dump was read directly, on several threads").anyMatch(m -> m.contains("as database"))
+                .noneMatch(m -> m.contains("Fast reader failed") || m.contains("Fast reader off"));
         assertThat(jdbc.sql("SELECT action FROM audit_log").query(String.class).list()).contains("run_start", "run_done");
 
         mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));            // a new plan makes the old result stale
@@ -459,6 +469,9 @@ class WebIT {
 
         var merge = com.etolv.neo4jtool.engine.Json.read(done.runJson(), com.etolv.neo4jtool.engine.build.MergeResult.class);
         assertThat(merge.swapped()).isTrue();
+        assertThat(jdbc.sql("SELECT message FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list())
+                .as("the backup of the target was read directly").noneMatch(m -> m.contains("reading it over Bolt instead"))
+                .anyMatch(m -> m.contains("Loading ") && m.contains("as database"));
         assertThat(merge.restoredNodes()).isEqualTo(10);
         assertThat(merge.targetNodes()).isEqualTo(10);
         assertThat(java.nio.file.Path.of(merge.backupFile())).isRegularFile().hasParent(backups);
@@ -631,7 +644,9 @@ class WebIT {
         return post("/settings").param("runner", runner).param("dockerImage", image).param("neo4jHome", "")
                 .param("workDir", System.getProperty("java.io.tmpdir")).param("outputDir", System.getProperty("java.io.tmpdir") + "/out").param("backupDir", System.getProperty("java.io.tmpdir") + "/backups").param("tempHeap", "512m").param("tempPageCache", "128m")
                 .param("startTimeoutMinutes", "10").param("orgProperty", orgProperty).param("batchSize", batchSize)
-                .param("sampleSize", "20").param("analyseRelationships", "true");
+                .param("sampleSize", "20").param("analyseRelationships", "true")
+                .param("fastReader", "true").param("readerHeap", "1g").param("readerPageCache", "256m").param("workers", "3")
+                .param("importThreads", "2").param("importMemory", "").param("idSetMemoryMb", "64").param("maxJobs", "2");
     }
 
     private Migration awaitState(long id, Migration.State wanted) throws InterruptedException {

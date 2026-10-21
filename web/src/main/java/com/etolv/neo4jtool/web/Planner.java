@@ -69,6 +69,13 @@ public class Planner {
                     + " nodes are selected. This is how Neo4j stores ids with ids kept; make sure the work and output "
                     + "directories have room.");
         }
+        if (source.kind() == Endpoint.Kind.LIVE && !selection.orgIds().isEmpty() && selected > 0
+                && !hasIndexOn(from, selection.orgProperty())) {
+            warnings.add("No index starts with '" + selection.orgProperty() + "' in the source. A running server then looks at "
+                    + "every node to find the companies, which takes hours on billions of nodes. Create one per label "
+                    + "(CREATE INDEX FOR (n:Label) ON (n." + selection.orgProperty() + ")), or read a dump or a stopped data "
+                    + "directory instead: the fast reader scans the store directly and does not need an index.");
+        }
         if (target != null && target.kind() == Endpoint.Kind.LIVE) {
             warnings.add("Merging into a running server is not possible in Neo4j Community: the target has to be stopped.");
         }
@@ -76,6 +83,18 @@ public class Planner {
         return new MigrationPlan(Instant.now().toString(), target == null ? "SPLIT" : "MERGE", fromSide, toSide, selection,
                 selection.selectsEverything(), selected, neighbours, neighbourLabels, highestId, storeBytes, Math.max(1, selected / NODES_PER_SECOND),
                 steps(source, target), warnings);
+    }
+
+    /** True when an online index has the property as its first (or only) property; unknown counts as true. */
+    private static boolean hasIndexOn(Neo4jClient client, String property) {
+        try (Session session = client.readSession()) {
+            return session.run("SHOW INDEXES YIELD state, properties, entityType WHERE state = 'ONLINE' AND entityType = 'NODE' "
+                    + "RETURN properties").list().stream()
+                    .anyMatch(r -> !r.get("properties").asList(v -> v.asString()).isEmpty()
+                            && r.get("properties").asList(v -> v.asString()).get(0).equals(property));
+        } catch (RuntimeException e) {
+            return true;
+        }
     }
 
     /**

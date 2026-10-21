@@ -7,6 +7,7 @@ import com.etolv.neo4jtool.engine.dryrun.DryRunReport;
 import com.etolv.neo4jtool.engine.dryrun.DryRunService;
 import com.etolv.neo4jtool.engine.instance.InstanceRunners;
 import com.etolv.neo4jtool.engine.build.BuildOptions;
+import com.etolv.neo4jtool.engine.build.IdSet;
 import com.etolv.neo4jtool.engine.build.MergeOptions;
 import com.etolv.neo4jtool.engine.build.MergeResult;
 import com.etolv.neo4jtool.engine.build.MergeService;
@@ -22,8 +23,9 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,8 +53,8 @@ public class MigrationJobs {
     private final DryRunService dryRunService = new DryRunService();
     private final SplitService splitService = new SplitService();
     private final MergeService mergeService = new MergeService();
-    // Two at a time: each job may start throw-away servers and hold all selected ids in memory.
-    private final ExecutorService executor = Executors.newFixedThreadPool(2);
+    // As many at a time as the settings say (two by default): each job may start throw-away servers and hold selected ids.
+    private final ThreadPoolExecutor executor = new ThreadPoolExecutor(2, 2, 60, TimeUnit.SECONDS, new LinkedBlockingQueue<>());
     private final Map<Long, Progress> running = new ConcurrentHashMap<>();
 
     public MigrationJobs(MigrationStore migrations, EndpointStore endpoints, EndpointService endpointService,
@@ -84,13 +86,34 @@ public class MigrationJobs {
         return running.get(migrationId);
     }
 
+    /** Queues a job; the number of jobs that run at the same time follows the settings as they are now. */
+    private void submit(Runnable job) {
+        AppSettings current = settings.get();
+        int jobs = Math.max(1, current.maxJobs());
+        if (jobs > executor.getMaximumPoolSize()) {
+            executor.setMaximumPoolSize(jobs);
+            executor.setCorePoolSize(jobs);
+        } else {
+            executor.setCorePoolSize(jobs);
+            executor.setMaximumPoolSize(jobs);
+        }
+        IdSet.configure(current.idSetMemoryMb() * 1024L * 1024L, Path.of(current.workDir(), "idsets"));
+        executor.submit(job);
+    }
+
+    /** How a build is done, by the settings: threads, import tuning, and the fast reader that checks the new database. */
+    private BuildOptions buildOptions(AppSettings current) {
+        return new BuildOptions(current.batchSize(), current.copySchema(), current.checkAfterBuild(), current.workers(),
+                current.importThreads(), current.importMemory(), endpointService.fastReaders());
+    }
+
     public void startPlan(Migration migration) {
         requireIdle(migration);
         migrations.start(migration.id(), Migration.State.PLANNING);
         jobLog.add(migration.scope(), "INFO", "Planning started");
         audit.record("plan_start", "#" + migration.id() + " " + migration.name());
         running.put(migration.id(), new Progress("Queued", 0, -1));
-        executor.submit(() -> runPlan(migration));
+        submit(() -> runPlan(migration));
     }
 
     public void startDryRun(Migration migration) {
@@ -102,7 +125,7 @@ public class MigrationJobs {
         jobLog.add(migration.scope(), "INFO", "Dry run started");
         audit.record("dry_run_start", "#" + migration.id() + " " + migration.name());
         running.put(migration.id(), new Progress("Queued", 0, -1));
-        executor.submit(() -> runDryRun(migration));
+        submit(() -> runDryRun(migration));
     }
 
     /**
@@ -137,7 +160,7 @@ public class MigrationJobs {
         jobLog.add(migration.scope(), "INFO", "Run started");
         audit.record("run_start", "#" + migration.id() + " " + migration.name());
         running.put(migration.id(), new Progress("Queued", 0, -1));
-        executor.submit(() -> {
+        submit(() -> {
             if (migration.isSplit()) {
                 runSplit(migration);
             } else {
@@ -263,11 +286,11 @@ public class MigrationJobs {
             SelectionConfig selection = SelectionConfigParser.parse(migration.selectionYaml());
             AppSettings current = settings.get();
             Path output = Path.of(current.outputDir(), fileName(migration));
-            BuildOptions options = new BuildOptions(current.batchSize(), current.copySchema(), current.checkAfterBuild());
+            BuildOptions options = buildOptions(current);
             running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
             SplitResult result;
             try (Opened from = endpointService.open(source, out)) {
-                result = splitService.run(from.client(), selection, InstanceRunners.create(current.instanceSettings()),
+                result = splitService.run(from.client(), from.fast(), selection, InstanceRunners.create(current.instanceSettings()),
                         Path.of(current.workDir()), output, options, progress(migration.id(), out), out);
             }
             migrations.ran(migration.id(), Json.write(result));
@@ -293,12 +316,12 @@ public class MigrationJobs {
                     ? MergeTarget.dataDirectory(Path.of(target.path()), target.database())
                     : MergeTarget.dump(Path.of(target.path()), target.database());
             Path output = Path.of(current.outputDir(), fileName(migration));
-            MergeOptions options = new MergeOptions(new BuildOptions(current.batchSize(), current.copySchema(),
-                    current.checkAfterBuild()), current.mergeSwap());
+            MergeOptions options = new MergeOptions(buildOptions(current), current.mergeSwap());
             running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
             MergeResult result;
             try (Opened from = endpointService.open(source, out)) {
-                result = mergeService.run(from.client(), selection, mergeTarget, InstanceRunners.create(current.instanceSettings()),
+                result = mergeService.run(from.client(), from.fast(), selection, mergeTarget,
+                        InstanceRunners.create(current.instanceSettings()),
                         Path.of(current.workDir()), Path.of(current.backupDir()), output, options, progress(migration.id(), out), out);
             }
             migrations.ran(migration.id(), Json.write(result));

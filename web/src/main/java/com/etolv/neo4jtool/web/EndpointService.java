@@ -1,13 +1,21 @@
 package com.etolv.neo4jtool.web;
 
 import com.etolv.neo4jtool.engine.conn.ConnectionSettings;
+import com.etolv.neo4jtool.engine.build.FastReader;
+import com.etolv.neo4jtool.engine.build.StoreSignature;
 import com.etolv.neo4jtool.engine.conn.Neo4jClient;
+import com.etolv.neo4jtool.engine.fast.ReaderProcess;
+import com.etolv.neo4jtool.engine.fast.Sizes;
+import com.etolv.neo4jtool.engine.instance.Workspace;
 import com.etolv.neo4jtool.engine.instance.InstanceRunner;
 import com.etolv.neo4jtool.engine.instance.InstanceRunner.RunningInstance;
 import com.etolv.neo4jtool.engine.instance.InstanceRunners;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 import org.springframework.stereotype.Service;
 
@@ -19,14 +27,23 @@ public class EndpointService {
     public static final class Opened implements AutoCloseable {
         private final Neo4jClient client;
         private final RunningInstance instance;
+        private final FastReader fast;
+        private final Runnable cleanUp;
 
-        private Opened(Neo4jClient client, RunningInstance instance) {
+        private Opened(Neo4jClient client, RunningInstance instance, FastReader fast, Runnable cleanUp) {
             this.client = client;
             this.instance = instance;
+            this.fast = fast;
+            this.cleanUp = cleanUp;
         }
 
         public Neo4jClient client() {
             return client;
+        }
+
+        /** Reads the store directly on several threads; null when this endpoint is read over Bolt only. */
+        public FastReader fast() {
+            return fast;
         }
 
         @Override
@@ -34,8 +51,20 @@ public class EndpointService {
             try {
                 client.close();
             } finally {
-                if (instance != null) {
-                    instance.close();
+                try {
+                    if (fast != null) {
+                        fast.close();
+                    }
+                } finally {
+                    try {
+                        if (instance != null) {
+                            instance.close();
+                        }
+                    } finally {
+                        if (cleanUp != null) {
+                            cleanUp.run();
+                        }
+                    }
                 }
             }
         }
@@ -53,18 +82,167 @@ public class EndpointService {
         if (endpoint.kind() == Endpoint.Kind.LIVE) {
             log.accept("Connecting to " + endpoint.uri());
             return connect(new ConnectionSettings(endpoint.uri(), endpoint.username(), endpoints.password(endpoint),
-                    endpoint.database()), null);
+                    endpoint.database()), null, null, null);
         }
         AppSettings current = settings.get();
         InstanceRunner runner = InstanceRunners.create(current.instanceSettings());
         Path where = Path.of(endpoint.path());
+        if (current.fastReader()) {
+            Opened fast = openFast(endpoint, current, runner, where, log);
+            if (fast != null) {
+                return fast;
+            }
+        }
         RunningInstance instance = endpoint.kind() == Endpoint.Kind.DUMP
                 ? runner.startFromDump(where, endpoint.database(), log)
                 : runner.startFromStoppedDirectory(where, endpoint.database(), Path.of(current.workDir()), log);
-        return connect(new ConnectionSettings(instance.boltUri(), null, null, endpoint.database()), instance);
+        return connect(new ConnectionSettings(instance.boltUri(), null, null, endpoint.database()), instance, null, null);
     }
 
-    private static Opened connect(ConnectionSettings connection, RunningInstance instance) {
+    /** The reader process settings, or null when its jars cannot be found. */
+    ReaderProcess.Settings readerSettings(AppSettings current) {
+        String classpath = readerClasspath(current);
+        if (classpath == null) {
+            return null;
+        }
+        return new ReaderProcess.Settings(classpath, current.readerHeap(), Sizes.bytes(current.readerPageCache()),
+                Path.of(current.workDir(), "reader"), Duration.ofMinutes(Math.max(1, current.startTimeoutMinutes())));
+    }
+
+    /** Starts readers on request; null when the fast reader is off or not installed. */
+    public FastReader.Factory fastReaders() {
+        AppSettings current = settings.get();
+        if (!current.fastReader()) {
+            return null;
+        }
+        ReaderProcess.Settings reader = readerSettings(current);
+        return reader == null ? null : ReaderProcess.factory(reader);
+    }
+
+    /** Null, having changed nothing, when the fast reader cannot be used for this endpoint. */
+    private Opened openFast(Endpoint endpoint, AppSettings current, InstanceRunner runner, Path where, Consumer<String> log) {
+        ReaderProcess.Settings reader;
+        try {
+            reader = readerSettings(current);
+        } catch (IllegalArgumentException e) {
+            log.accept("Fast reader off: " + e.getMessage() + ". Using a temporary server.");
+            return null;
+        }
+        if (reader == null) {
+            log.accept("Fast reader off: its jars were not found (set the directory in Settings). Using a temporary server.");
+            return null;
+        }
+        Workspace workspace = null;
+        ReaderProcess process = null;
+        Neo4jClient client = null;
+        try {
+            Path data;
+            String before = null;
+            if (endpoint.kind() == Endpoint.Kind.DUMP) {
+                workspace = Workspace.create(Path.of(current.workDir()), "read");
+                data = workspace.directory("data");
+                runner.loadDump(where, endpoint.database(), data, log);
+            } else {
+                String problem = notOpenableInPlace(where, endpoint.database());
+                if (problem != null) {
+                    log.accept("Fast reader not used for '" + endpoint.name() + "': " + problem + ". Using a temporary server.");
+                    return null;
+                }
+                data = where;
+                before = StoreSignature.of(where, endpoint.database());
+            }
+            process = ReaderProcess.start(reader, data, endpoint.database(), true, log);
+            client = new Neo4jClient(new ConnectionSettings(process.boltUri(), null, null, endpoint.database()));
+            client.verify();
+            final ReaderProcess started = process;
+            final Workspace owned = workspace;
+            final String signature = before;
+            final Path directory = where;
+            final String database = endpoint.database();
+            Runnable cleanUp = () -> {
+                if (signature != null) {
+                    try {
+                        if (!signature.equals(StoreSignature.of(directory, database))) {
+                            log.accept("WARNING: the files of '" + database + "' in " + directory + " changed while they were read");
+                        }
+                    } catch (RuntimeException e) {
+                        log.accept("Could not compare the files of '" + database + "' after reading: " + e.getMessage());
+                    }
+                }
+                if (owned != null) {
+                    runner.deleteWorkspace(owned);
+                }
+            };
+            return new Opened(client, null, started, cleanUp);
+        } catch (RuntimeException e) {
+            log.accept("Fast reader failed for '" + endpoint.name() + "' (" + e.getMessage() + "). Using a temporary server.");
+            if (client != null) {
+                client.close();
+            }
+            if (process != null) {
+                process.close();
+            }
+            if (workspace != null) {
+                runner.deleteWorkspace(workspace);
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Opening a store, even read only, takes its lock and may touch its files, so it needs the right to write there. A
+     * server that is running, or an owner that is not the user of this application, cannot be read this way.
+     */
+    private static String notOpenableInPlace(Path dataDirectory, String database) {
+        List<Path> needed = new ArrayList<>(List.of(dataDirectory.resolve("databases").resolve(database),
+                dataDirectory.resolve("transactions").resolve(database)));
+        for (Path path : needed) {
+            if (!Files.isDirectory(path)) {
+                return path + " is not there";
+            }
+            if (!Files.isWritable(path)) {
+                return path + " is not writable by this application's user";
+            }
+        }
+        Path store = needed.get(0).resolve("neostore");
+        if (Files.exists(store) && !Files.isWritable(store)) {
+            return store + " is not writable by this application's user";
+        }
+        return null;
+    }
+
+    /** The jars of the reader: the setting, or a directory next to the application. */
+    private static String readerClasspath(AppSettings current) {
+        List<Path> candidates = new ArrayList<>();
+        if (current.readerLib() != null && !current.readerLib().isBlank()) {
+            candidates.add(Path.of(current.readerLib()));
+        } else {
+            String property = System.getProperty("tool.reader.lib");
+            if (property != null && !property.isBlank()) {
+                candidates.add(Path.of(property));
+            }
+            Path cwd = Path.of("").toAbsolutePath();
+            candidates.add(cwd.resolve("reader-lib"));
+            candidates.add(cwd.resolve("reader").resolve("target").resolve("lib"));
+            candidates.add(cwd.getParent() == null ? cwd : cwd.getParent().resolve("reader").resolve("target").resolve("lib"));
+        }
+        for (Path candidate : candidates) {
+            if (Files.isDirectory(candidate) && hasReaderJar(candidate)) {
+                return candidate.toAbsolutePath() + "/*";
+            }
+        }
+        return null;
+    }
+
+    private static boolean hasReaderJar(Path directory) {
+        try (var files = Files.list(directory)) {
+            return files.anyMatch(f -> f.getFileName().toString().startsWith("reader"));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static Opened connect(ConnectionSettings connection, RunningInstance instance, FastReader fast, Runnable cleanUp) {
         Neo4jClient client = new Neo4jClient(connection);
         try {
             client.verify();
@@ -75,7 +253,7 @@ public class EndpointService {
             }
             throw e;
         }
-        return new Opened(client, instance);
+        return new Opened(client, instance, fast, cleanUp);
     }
 
     /** A quick check that costs nothing: connects to a server, or looks at the file or directory. */

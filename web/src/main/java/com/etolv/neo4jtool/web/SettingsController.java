@@ -41,11 +41,18 @@ public class SettingsController {
                 @RequestParam String tempHeap, @RequestParam String tempPageCache, @RequestParam int startTimeoutMinutes,
                 @RequestParam String orgProperty, @RequestParam(defaultValue = "false") boolean includeNeighbours,
                 @RequestParam int batchSize, @RequestParam int sampleSize,
-                @RequestParam(defaultValue = "false") boolean analyseRelationships, RedirectAttributes redirect) {
+                @RequestParam(defaultValue = "false") boolean analyseRelationships,
+                @RequestParam(defaultValue = "false") boolean fastReader, @RequestParam(defaultValue = "") String readerLib,
+                @RequestParam(defaultValue = "2g") String readerHeap, @RequestParam(defaultValue = "2g") String readerPageCache,
+                @RequestParam(defaultValue = "1") int workers, @RequestParam(defaultValue = "0") int importThreads,
+                @RequestParam(defaultValue = "") String importMemory, @RequestParam(defaultValue = "512") int idSetMemoryMb,
+                @RequestParam(defaultValue = "2") int maxJobs, RedirectAttributes redirect) {
         try {
             settings.save(new AppSettings(runner, dockerImage.strip(), neo4jHome.strip(), workDir.strip(), outputDir.strip(), backupDir.strip(), mergeSwap, copySchema,
                     checkAfterBuild, tempHeap.strip(),
-                    tempPageCache.strip(), startTimeoutMinutes, orgProperty.strip(), includeNeighbours, batchSize, sampleSize, analyseRelationships));
+                    tempPageCache.strip(), startTimeoutMinutes, orgProperty.strip(), includeNeighbours, batchSize, sampleSize, analyseRelationships,
+                    fastReader, readerLib.strip(), readerHeap.strip(), readerPageCache.strip(), workers, importThreads,
+                    importMemory.strip(), idSetMemoryMb, maxJobs));
             audit.record("settings_save", null);
             redirect.addFlashAttribute("message", "Settings saved");
         } catch (IllegalArgumentException e) {

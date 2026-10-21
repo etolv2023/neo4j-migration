@@ -19,6 +19,16 @@ import java.time.Duration;
  *                     a selected node (the lines of an invoice, say); one step only
  * @param copySchema   a split recreates the source's indexes and constraints in the new database
  * @param checkAfterBuild a split runs the store consistency check on the new database before it dumps it
+ * @param fastReader   read a dump or a stopped data directory directly with the Neo4j kernel on several threads, instead
+ *                     of through a temporary server over Bolt (about ten times faster; falls back by itself when it cannot)
+ * @param readerLib    directory with the jars of the fast reader; empty = look next to the application
+ * @param readerHeap   heap of the fast reader process
+ * @param readerPageCache page cache of the fast reader process; the more of the store it holds the faster the scan
+ * @param workers      threads that read and write CSV at the same time
+ * @param importThreads threads of the import (0 = one per core)
+ * @param importMemory memory limit of the import, for example 16g (empty = decided by neo4j-admin)
+ * @param idSetMemoryMb memory the selected ids may take in the application before they go to a file on disk
+ * @param maxJobs      migrations that may run at the same time
  */
 public record AppSettings(
         InstanceSettings.Runner runner,
@@ -37,7 +47,30 @@ public record AppSettings(
         boolean includeNeighbours,
         int batchSize,
         int sampleSize,
-        boolean analyseRelationships) {
+        boolean analyseRelationships,
+        boolean fastReader,
+        String readerLib,
+        String readerHeap,
+        String readerPageCache,
+        int workers,
+        int importThreads,
+        String importMemory,
+        int idSetMemoryMb,
+        int maxJobs) {
+
+    /** The settings as they were before the speed options existed: those get their defaults. */
+    public AppSettings(InstanceSettings.Runner runner, String dockerImage, String neo4jHome, String workDir, String outputDir,
+                       String backupDir, boolean mergeSwap, boolean copySchema, boolean checkAfterBuild, String tempHeap,
+                       String tempPageCache, int startTimeoutMinutes, String orgProperty, boolean includeNeighbours, int batchSize,
+                       int sampleSize, boolean analyseRelationships) {
+        this(runner, dockerImage, neo4jHome, workDir, outputDir, backupDir, mergeSwap, copySchema, checkAfterBuild, tempHeap,
+                tempPageCache, startTimeoutMinutes, orgProperty, includeNeighbours, batchSize, sampleSize, analyseRelationships,
+                true, "", "2g", "2g", defaultWorkers(), 0, "", 512, 2);
+    }
+
+    public static int defaultWorkers() {
+        return Math.max(1, Math.min(32, Runtime.getRuntime().availableProcessors()));
+    }
 
     public static AppSettings defaults() {
         return new AppSettings(InstanceSettings.Runner.DOCKER, "neo4j:5.26.29-community", "",

@@ -15,12 +15,12 @@ import java.util.stream.Stream;
  * A fingerprint of the files of one database in a stopped server's data directory (names, sizes, modification times).
  * If it is different later, something wrote to the database in the meantime, for example because the server was started.
  */
-final class StoreSignature {
+public final class StoreSignature {
 
     private StoreSignature() {
     }
 
-    static String of(Path dataDirectory, String database) {
+    public static String of(Path dataDirectory, String database) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             for (Path root : List.of(dataDirectory.resolve("databases").resolve(database),
