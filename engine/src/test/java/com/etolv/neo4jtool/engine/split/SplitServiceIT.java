@@ -113,6 +113,9 @@ class SplitServiceIT {
         assertThat(result.propertiesWrittenAfter()).isGreaterThanOrEqualTo(2);
         assertThat(result.schemaStatements()).isEqualTo(2);
         assertThat(result.consistencyChecked()).isTrue();
+        assertThat(log).as("the check's warning for every unused id is counted, not logged")
+                .noneMatch(l -> l.contains("is not in use but the id is not up for reuse"))
+                .anyMatch(l -> l.contains("unused node slots were reported by the check"));
         try (Stream<Path> left = Files.list(work)) {
             assertThat(left.toList()).as("work directory after the split").isEmpty();
         }

@@ -95,7 +95,9 @@ public final class SplitService {
 
             if (options.checkConsistency()) {
                 timer.phase("Checking the store (neo4j-admin database check)");
-                runner.checkDatabase(data, database, log);
+                UnusedRecords unused = new UnusedRecords(log);
+                runner.checkDatabase(data, database, unused);
+                unused.summarize();
             }
 
             timer.phase("Writing the dump");
@@ -127,6 +129,35 @@ public final class SplitService {
             }
         }
         return IdSet.of(ids);
+    }
+
+    /**
+     * The new store has a slot for every id up to the highest one, and the ids that are not selected stay unused. The
+     * check lists each of them as a warning, which can be thousands of lines; they are counted instead of logged.
+     */
+    private static final class UnusedRecords implements Consumer<String> {
+        private final Consumer<String> log;
+        private long count;
+
+        UnusedRecords(Consumer<String> log) {
+            this.log = log;
+        }
+
+        @Override
+        public void accept(String line) {
+            if (line.contains("is not in use but the id is not up for reuse")) {
+                count++;
+            } else if (!(line.stripLeading().startsWith("Node[") && line.contains("used=false"))) {
+                log.accept(line);
+            }
+        }
+
+        void summarize() {
+            if (count > 0) {
+                log.accept(count + " unused node slots were reported by the check. That is expected: ids that are not selected "
+                        + "leave gaps in the new database.");
+            }
+        }
     }
 
     /** Names the step in progress and records how long each step took. */
