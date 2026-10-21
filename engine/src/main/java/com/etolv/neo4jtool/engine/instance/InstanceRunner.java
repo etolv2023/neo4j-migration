@@ -15,6 +15,12 @@ public interface InstanceRunner {
     RunningInstance startFromDump(Path dumpFile, String database, Consumer<String> log);
 
     /**
+     * Loads a dump into {@code dataDirectory} without starting a server, so that the files can be read directly. The
+     * directory must be empty and belong to the caller, and so do the files that are made in it.
+     */
+    void loadDump(Path dumpFile, String database, Path dataDirectory, Consumer<String> log);
+
+    /**
      * Writes a dump of a database whose server is stopped. {@code dataDirectory} is the server's data directory (the one
      * with {@code databases/} and {@code transactions/} in it). The result is {@code <database>.dump} in
      * {@code outputDirectory}. Neo4j takes a lock inside the store while it dumps and changes nothing else.

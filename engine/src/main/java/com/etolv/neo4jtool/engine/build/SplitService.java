@@ -31,6 +31,15 @@ public final class SplitService {
      */
     public SplitResult run(Neo4jClient source, SelectionConfig selection, InstanceRunner runner, Path workDir, Path outputFile,
                            BuildOptions options, DryRunProgress progress, Consumer<String> log) {
+        return run(source, null, selection, runner, workDir, outputFile, options, progress, log);
+    }
+
+    /**
+     * @param fast reads the source with the kernel on all threads when it is not null; {@code source} is still used for the
+     *             few Cypher questions (the schema) and may be served by the same process
+     */
+    public SplitResult run(Neo4jClient source, FastReader fast, SelectionConfig selection, InstanceRunner runner, Path workDir,
+                           Path outputFile, BuildOptions options, DryRunProgress progress, Consumer<String> log) {
         if (Files.exists(outputFile)) {
             throw new BuildException(outputFile + " already exists. Nothing was changed; choose another name or remove it.");
         }
@@ -39,7 +48,7 @@ public final class SplitService {
         String database = source.database();
 
         phases.start("Reading the selected ids");
-        IdSet ids = Ids.selected(source, selection);
+        IdSet ids = fast != null ? fast.select(selection, options.workers(), progress) : Ids.selected(source, selection);
         if (ids.size() == 0) {
             throw new BuildException("The selection matches no node in the source. Nothing was copied.");
         }
@@ -52,8 +61,11 @@ public final class SplitService {
             Path dumps = workspace.directory("dump");
 
             phases.start("Exporting the selection to CSV");
-            CsvExporter.Export export = new CsvExporter(CsvExporter.bolt(source), ids, List.of(CsvExporter.Rule.out(ids)), "", csv,
-                    options.batchSize(), options.workers(), progress).export();
+            List<CsvExporter.Rule> rules = List.of(CsvExporter.Rule.out(ids));
+            CsvExporter.Export export = fast != null
+                    ? fast.export(ids, rules, "", csv, options.batchSize(), options.workers(), progress)
+                    : new CsvExporter(CsvExporter.bolt(source), ids, rules, "", csv, options.batchSize(), options.workers(),
+                            progress).export();
             log.accept(export.nodes() + " nodes, " + export.relationships() + " relationships exported; "
                     + export.fixups().size() + " properties will be written afterwards; "
                     + export.relationshipsToOutside() + " relationships to nodes outside the selection are left out");

@@ -61,6 +61,19 @@ public final class LocalRunner implements InstanceRunner {
     }
 
     @Override
+    public void loadDump(Path dumpFile, String database, Path dataDirectory, Consumer<String> log) {
+        Workspace workspace = Workspace.create(settings.workDir(), "load");
+        try {
+            Path conf = writeConfig(workspace, dataDirectory, database, 0);
+            log.accept("Loading " + dumpFile + " as database '" + database + "'");
+            Commands.run(List.of(admin(), "database", "load", "--from-stdin", "--overwrite-destination=true", database),
+                    environment(conf), dumpFile, log);
+        } finally {
+            workspace.delete(root -> { });
+        }
+    }
+
+    @Override
     public RunningInstance serveDataDirectory(Path dataDirectory, String database, Consumer<String> log) {
         Workspace workspace = Workspace.create(settings.workDir(), "serve");
         try {

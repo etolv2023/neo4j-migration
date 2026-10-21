@@ -44,12 +44,22 @@ final class NewDatabase {
                     writer.createSchema(schema);
                 }
             }
-            phases.start("Comparing the new database with the exported data");
-            try (Neo4jClient built = new Neo4jClient(new ConnectionSettings(server.boltUri(), null, null, database))) {
-                built.verify();
-                Verifier.verify(CsvExporter.bolt(built), expected, options.batchSize(), options.workers(), phases.progress());
+            if (options.fastReaders() == null) {
+                phases.start("Comparing the new database with the exported data");
+                try (Neo4jClient built = new Neo4jClient(new ConnectionSettings(server.boltUri(), null, null, database))) {
+                    built.verify();
+                    Verifier.verify(CsvExporter.bolt(built), expected, options.batchSize(), options.workers(), phases.progress());
+                }
             }
             phases.start("Stopping the temporary server");
+        }
+
+        if (options.fastReaders() != null) {
+            // The server is stopped, so the store can be read directly, on all threads.
+            phases.start("Comparing the new database with the exported data (fast reader)");
+            try (FastReader built = options.fastReaders().open(data, database, false, log)) {
+                built.verify(expected, options.batchSize(), options.workers(), phases.progress());
+            }
         }
 
         if (options.checkConsistency()) {

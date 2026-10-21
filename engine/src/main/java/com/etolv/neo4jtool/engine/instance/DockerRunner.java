@@ -56,6 +56,14 @@ public final class DockerRunner implements InstanceRunner {
     }
 
     @Override
+    public void loadDump(Path dumpFile, String database, Path dataDirectory, Consumer<String> log) {
+        log.accept("Loading " + dumpFile + " as database '" + database + "'");
+        Commands.run(List.of("docker", "run", "--rm", "-i", "--entrypoint", "neo4j-admin", "--user", owner(dataDirectory),
+                "-v", dataDirectory.toAbsolutePath() + ":/data", settings.dockerImage(),
+                "database", "load", "--from-stdin", "--overwrite-destination=true", database), Map.of(), dumpFile, log);
+    }
+
+    @Override
     public RunningInstance serveDataDirectory(Path dataDirectory, String database, Consumer<String> log) {
         return launch(dataDirectory, database, log, null, true);
     }

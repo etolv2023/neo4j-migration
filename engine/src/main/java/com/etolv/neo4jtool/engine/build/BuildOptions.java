@@ -7,9 +7,11 @@ package com.etolv.neo4jtool.engine.build;
  * @param workers          threads that read the source and write the CSV files at the same time
  * @param importThreads    threads of the import (0 = neo4j-admin decides: one per core)
  * @param importMemory     memory limit of the import, for example "16g" (empty = neo4j-admin decides)
+ * @param fastReaders      opens the finished database for the fast, parallel comparison with what was exported; null
+ *                         compares over Bolt on the temporary server instead
  */
 public record BuildOptions(int batchSize, boolean copySchema, boolean checkConsistency, int workers, int importThreads,
-                           String importMemory) {
+                           String importMemory, FastReader.Factory fastReaders) {
 
     public BuildOptions {
         if (batchSize < 100) {
@@ -25,7 +27,7 @@ public record BuildOptions(int batchSize, boolean copySchema, boolean checkConsi
     }
 
     public BuildOptions(int batchSize, boolean copySchema, boolean checkConsistency) {
-        this(batchSize, copySchema, checkConsistency, 1, 0, "");
+        this(batchSize, copySchema, checkConsistency, 1, 0, "", null);
     }
 
     public static BuildOptions defaults() {
@@ -33,6 +35,10 @@ public record BuildOptions(int batchSize, boolean copySchema, boolean checkConsi
     }
 
     public BuildOptions withWorkers(int workers) {
-        return new BuildOptions(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory);
+        return new BuildOptions(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, fastReaders);
+    }
+
+    public BuildOptions withFastReaders(FastReader.Factory fastReaders) {
+        return new BuildOptions(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, fastReaders);
     }
 }
