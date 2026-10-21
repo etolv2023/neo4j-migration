@@ -96,5 +96,14 @@ class SplitFastIT {
         assertThat(viaFast.relationshipFingerprint()).isEqualTo(viaBolt.relationshipFingerprint());
         assertThat(viaFast.schemaStatements()).isEqualTo(viaBolt.schemaStatements());
         assertThat(temp.resolve("fast.dump")).exists();
+
+        SplitResult asDirectory = new SplitService().run(bolt, reader, selection, runner, work, temp.resolve("fast-dir"),
+                new BuildOptions(100, true, false, 2, 0, "", ReaderProcess.factory(readerSettings)).withDirectoryOutput(true),
+                DryRunProgress.NONE, log::add);
+        assertThat(asDirectory.nodeFingerprint()).isEqualTo(viaBolt.nodeFingerprint());
+        assertThat(asDirectory.relationshipFingerprint()).isEqualTo(viaBolt.relationshipFingerprint());
+        assertThat(temp.resolve("fast-dir").resolve("databases").resolve("neo4j").resolve("neostore")).exists();
+        assertThat(asDirectory.outputBytes()).isGreaterThan(0);
+        assertThat(asDirectory.consistencyChecked()).isFalse();
     }
 }

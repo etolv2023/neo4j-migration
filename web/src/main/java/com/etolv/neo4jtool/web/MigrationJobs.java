@@ -285,8 +285,8 @@ public class MigrationJobs {
                     .orElseThrow(() -> new IllegalStateException("The source '" + migration.sourceName() + "' was deleted"));
             SelectionConfig selection = SelectionConfigParser.parse(migration.selectionYaml());
             AppSettings current = settings.get();
-            Path output = Path.of(current.outputDir(), fileName(migration));
-            BuildOptions options = buildOptions(current);
+            Path output = Path.of(current.outputDir(), fileName(migration, !current.splitAsDirectory()));
+            BuildOptions options = buildOptions(current).withDirectoryOutput(current.splitAsDirectory());
             running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
             SplitResult result;
             try (Opened from = endpointService.open(source, out)) {
@@ -315,7 +315,7 @@ public class MigrationJobs {
             MergeTarget mergeTarget = target.kind() == Endpoint.Kind.STOPPED
                     ? MergeTarget.dataDirectory(Path.of(target.path()), target.database())
                     : MergeTarget.dump(Path.of(target.path()), target.database());
-            Path output = Path.of(current.outputDir(), fileName(migration));
+            Path output = Path.of(current.outputDir(), fileName(migration, true));
             MergeOptions options = new MergeOptions(buildOptions(current), current.mergeSwap());
             running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
             MergeResult result;
@@ -336,10 +336,10 @@ public class MigrationJobs {
         }
     }
 
-    private static String fileName(Migration migration) {
+    private static String fileName(Migration migration, boolean dump) {
         String slug = migration.name().toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
         String stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
-        return (slug.isEmpty() ? "split" : slug) + "-" + migration.id() + "-" + stamp + ".dump";
+        return (slug.isEmpty() ? "split" : slug) + "-" + migration.id() + "-" + stamp + (dump ? ".dump" : "");
     }
 
     private DryRunProgress progress(long migrationId, Consumer<String> out) {

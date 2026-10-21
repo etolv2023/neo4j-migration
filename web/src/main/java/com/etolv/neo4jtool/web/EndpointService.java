@@ -190,23 +190,21 @@ public class EndpointService {
     }
 
     /**
-     * Opening a store, even read only, takes its lock and may touch its files, so it needs the right to write there. A
-     * server that is running, or an owner that is not the user of this application, cannot be read this way.
+     * The reader opens the big record files with write access (it never writes to them) and takes the lock file, so
+     * the user of this application must be allowed to write there. Its small bookkeeping files are copied, so the
+     * directories themselves need not be writable. Returns why not, or null.
      */
     private static String notOpenableInPlace(Path dataDirectory, String database) {
-        List<Path> needed = new ArrayList<>(List.of(dataDirectory.resolve("databases").resolve(database),
-                dataDirectory.resolve("transactions").resolve(database)));
-        for (Path path : needed) {
-            if (!Files.isDirectory(path)) {
-                return path + " is not there";
-            }
-            if (!Files.isWritable(path)) {
-                return path + " is not writable by this application's user";
-            }
+        Path store = dataDirectory.resolve("databases").resolve(database);
+        if (!Files.isDirectory(store)) {
+            return store + " is not there";
         }
-        Path store = needed.get(0).resolve("neostore");
-        if (Files.exists(store) && !Files.isWritable(store)) {
-            return store + " is not writable by this application's user";
+        for (String name : List.of("neostore", "neostore.nodestore.db", "neostore.relationshipstore.db",
+                "neostore.propertystore.db", "database_lock")) {
+            Path file = store.resolve(name);
+            if (Files.exists(file) && !Files.isWritable(file)) {
+                return file + " is not writable by this application's user (Neo4j opens its store files for writing even to read)";
+            }
         }
         return null;
     }

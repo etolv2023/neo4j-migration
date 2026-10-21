@@ -126,7 +126,7 @@
                 </div>
                 <table class="kv" style="margin-top:12px">
                     <tbody>
-                    <tr><td>Dump file</td><td class="mono" th:text="${result.outputFile()}"></td></tr>
+                    <tr><td>Dump file or data directory</td><td class="mono" th:text="${result.outputFile()}"></td></tr>
                     <tr><td>Size</td><td th:text="${@fmt.number(result.outputBytes())} + ' bytes'"></td></tr>
                     <tr><td>Checked</td><td>Every node id, label and property, and every relationship, was read back and compared with the source<span th:if="${result.consistencyChecked()}">; the store passed <span class="mono">neo4j-admin database check</span></span>.</td></tr>
                     <tr><td>Written after the import</td><td th:text="${result.propertiesWrittenAfter() + ' properties the CSV import cannot carry (empty lists and dates with a named time zone)'}"></td></tr>

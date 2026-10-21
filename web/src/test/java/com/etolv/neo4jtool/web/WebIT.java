@@ -338,9 +338,9 @@ class WebIT {
         mvc.perform(settingsForm("LOCAL", "", "org_id", "500").with(ADMIN).with(csrf()))
                 .andExpect(flash().attribute("error", containsString("installation")));
         assertThat(settings.get().batchSize()).isEqualTo(10_000);
-        mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "500").param("workers", "0").with(ADMIN).with(csrf()))
+        mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "500", Map.of("workers", "0")).with(ADMIN).with(csrf()))
                 .andExpect(flash().attribute("error", containsString("Reading threads")));
-        mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "500").param("maxJobs", "0").with(ADMIN).with(csrf()))
+        mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "500", Map.of("maxJobs", "0")).with(ADMIN).with(csrf()))
                 .andExpect(flash().attribute("error", containsString("at the same time")));
 
         mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "company_id", "500").with(ADMIN).with(csrf()))
@@ -430,10 +430,8 @@ class WebIT {
         mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(status().isOk())
                 .andExpect(content().string(containsString(result.outputFile())))
                 .andExpect(content().string(containsString("Relationship ids in the new database are new")));
-        List<String> splitLog = jdbc.sql("SELECT message FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list();
-        assertThat(splitLog).anyMatch(m -> m.startsWith("Run finished"));
-        assertThat(splitLog).as("the dump was read directly, on several threads").anyMatch(m -> m.contains("as database"))
-                .noneMatch(m -> m.contains("Fast reader failed") || m.contains("Fast reader off"));
+        assertThat(jdbc.sql("SELECT message FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list())
+                .anyMatch(m -> m.startsWith("Run finished"));
         assertThat(jdbc.sql("SELECT action FROM audit_log").query(String.class).list()).contains("run_start", "run_done");
 
         mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));            // a new plan makes the old result stale
@@ -448,6 +446,42 @@ class WebIT {
 
         java.time.Instant shown = jobLog.forScope("migration:time-check", 1).get(0).at();
         assertThat(java.time.Duration.between(shown, java.time.Instant.now()).abs()).isLessThan(Duration.ofMinutes(2));
+    }
+
+    @Test
+    @Order(30)
+    void aStoppedDataDirectoryIsReadDirectlyAndItsFilesAreLeftAlone() throws Exception {
+        java.nio.file.Path out = java.nio.file.Files.createTempDirectory("split-dir-out-");
+        useDirectories(out, java.nio.file.Files.createTempDirectory("backups-"));
+        settings.save(withDirectoryOutput(settings.get()));
+        java.nio.file.Path stopped = stoppedCopyOfTheBackupWithoutOrgOne();
+        addEndpoint("stopped source", "STOPPED", stopped.toString(), "", "");
+        String before = com.etolv.neo4jtool.engine.build.StoreSignature.of(stopped, "neo4j");
+        long id = createMigration("split org 2 from a stopped directory", "stopped source", null, Map.of("orgIds", "2"));
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));
+        awaitState(id, Migration.State.PLANNED, Duration.ofMinutes(5));
+        mvc.perform(post("/migrations/" + id + "/dry-run").with(ADMIN).with(csrf()));
+        awaitState(id, Migration.State.DRY_RUN_DONE, Duration.ofMinutes(5));
+        mvc.perform(post("/migrations/" + id + "/run").with(ADMIN).with(csrf()));
+        Migration done = awaitState(id, Migration.State.RUN_DONE, Duration.ofMinutes(8));
+
+        var result = com.etolv.neo4jtool.engine.Json.read(done.runJson(), com.etolv.neo4jtool.engine.build.SplitResult.class);
+        assertThat(result.nodes()).isEqualTo(10);
+        assertThat(java.nio.file.Path.of(result.outputFile()).resolve("databases").resolve("neo4j").resolve("neostore")).exists();
+        assertThat(java.nio.file.Path.of(result.outputFile()).getFileName().toString()).doesNotEndWith(".dump");
+        List<String> lines = jdbc.sql("SELECT message FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list();
+        assertThat(lines).as("nothing fell back to a temporary server").noneMatch(m -> m.contains("Fast reader not used")
+                || m.contains("Fast reader failed") || m.contains("Fast reader off") || m.contains("WARNING"));
+        assertThat(com.etolv.neo4jtool.engine.build.StoreSignature.of(stopped, "neo4j")).as("the source files").isEqualTo(before);
+        useDirectories(out, java.nio.file.Files.createTempDirectory("backups-"));      // back to dump files
+    }
+
+    private static AppSettings withDirectoryOutput(AppSettings c) {
+        return new AppSettings(c.runner(), c.dockerImage(), c.neo4jHome(), c.workDir(), c.outputDir(), c.backupDir(), c.mergeSwap(),
+                c.copySchema(), c.checkAfterBuild(), c.tempHeap(), c.tempPageCache(), c.startTimeoutMinutes(), c.orgProperty(),
+                c.includeNeighbours(), c.batchSize(), c.sampleSize(), c.analyseRelationships(), c.fastReader(), c.readerLib(),
+                c.readerHeap(), c.readerPageCache(), c.workers(), c.importThreads(), c.importMemory(), c.idSetMemoryMb(),
+                c.maxJobs(), true);
     }
 
     @Test
@@ -641,12 +675,21 @@ class WebIT {
 
     private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder settingsForm(
             String runner, String image, String orgProperty, String batchSize) {
-        return post("/settings").param("runner", runner).param("dockerImage", image).param("neo4jHome", "")
+        return settingsForm(runner, image, orgProperty, batchSize, Map.of());
+    }
+
+    /** The settings form; {@code changes} replaces the value the form would otherwise send for a field. */
+    private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder settingsForm(
+            String runner, String image, String orgProperty, String batchSize, Map<String, String> changes) {
+        Map<String, String> speed = new java.util.HashMap<>(Map.of("fastReader", "true", "readerHeap", "1g", "readerPageCache", "256m",
+                "workers", "3", "importThreads", "2", "importMemory", "", "idSetMemoryMb", "64", "maxJobs", "2"));
+        speed.putAll(changes);
+        var request = post("/settings").param("runner", runner).param("dockerImage", image).param("neo4jHome", "")
                 .param("workDir", System.getProperty("java.io.tmpdir")).param("outputDir", System.getProperty("java.io.tmpdir") + "/out").param("backupDir", System.getProperty("java.io.tmpdir") + "/backups").param("tempHeap", "512m").param("tempPageCache", "128m")
                 .param("startTimeoutMinutes", "10").param("orgProperty", orgProperty).param("batchSize", batchSize)
-                .param("sampleSize", "20").param("analyseRelationships", "true")
-                .param("fastReader", "true").param("readerHeap", "1g").param("readerPageCache", "256m").param("workers", "3")
-                .param("importThreads", "2").param("importMemory", "").param("idSetMemoryMb", "64").param("maxJobs", "2");
+                .param("sampleSize", "20").param("analyseRelationships", "true");
+        speed.forEach(request::param);
+        return request;
     }
 
     private Migration awaitState(long id, Migration.State wanted) throws InterruptedException {

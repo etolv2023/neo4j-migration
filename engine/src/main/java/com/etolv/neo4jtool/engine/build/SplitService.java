@@ -75,19 +75,60 @@ public final class SplitService {
                     List.of(export.fixups()), schema,
                     Verifier.Expected.of(ids, export), options, phases, log);
 
-            phases.start("Writing the dump");
-            Path dump = runner.dumpStoppedDatabase(data, database, dumps, log);
-            Files.createDirectories(outputFile.toAbsolutePath().getParent());
-            Files.move(dump, outputFile);
+            long outputBytes;
+            if (options.directoryOutput()) {
+                phases.start("Moving the data directory to its place");
+                Files.createDirectories(outputFile.toAbsolutePath().getParent());
+                moveDirectory(data, outputFile);
+                outputBytes = size(outputFile);
+            } else {
+                phases.start("Writing the dump");
+                Path dump = runner.dumpStoppedDatabase(data, database, dumps, log);
+                Files.createDirectories(outputFile.toAbsolutePath().getParent());
+                Files.move(dump, outputFile);
+                outputBytes = Files.size(outputFile);
+            }
 
             return new SplitResult(started.toString(), Instant.now().toString(), database, export.nodes(), export.relationships(),
                     export.relationshipsToOutside(), export.fixups().size(), schema.size(), options.checkConsistency(),
-                    outputFile.toAbsolutePath().toString(), Files.size(outputFile),
+                    outputFile.toAbsolutePath().toString(), outputBytes,
                     Long.toHexString(export.nodeFingerprint()), Long.toHexString(export.relationshipFingerprint()), phases.all());
         } catch (IOException e) {
             throw new BuildException("Could not write " + outputFile + ": " + e.getMessage(), e);
         } finally {
             runner.deleteWorkspace(workspace);
+        }
+    }
+
+    /** A rename when both are on the same file system, otherwise a copy (the work directory is deleted afterwards). */
+    private static void moveDirectory(Path from, Path to) throws IOException {
+        try {
+            Files.move(from, to);
+            return;
+        } catch (IOException sameFileSystemFailed) {
+            Files.createDirectories(to);
+        }
+        try (var walk = Files.walk(from)) {
+            for (Path source : (Iterable<Path>) walk::iterator) {
+                Path target = to.resolve(from.relativize(source).toString());
+                if (Files.isDirectory(source)) {
+                    Files.createDirectories(target);
+                } else {
+                    Files.copy(source, target);
+                }
+            }
+        }
+    }
+
+    private static long size(Path directory) throws IOException {
+        try (var walk = Files.walk(directory)) {
+            return walk.filter(Files::isRegularFile).mapToLong(f -> {
+                try {
+                    return Files.size(f);
+                } catch (IOException e) {
+                    return 0;
+                }
+            }).sum();
         }
     }
 }

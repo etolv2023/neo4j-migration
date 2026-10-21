@@ -28,6 +28,7 @@ import java.time.Duration;
  * @param importThreads threads of the import (0 = one per core)
  * @param importMemory memory limit of the import, for example 16g (empty = decided by neo4j-admin)
  * @param idSetMemoryMb memory the selected ids may take in the application before they go to a file on disk
+ * @param splitAsDirectory a split leaves a data directory instead of a dump file (no dump to write, no dump to load again)
  * @param maxJobs      migrations that may run at the same time
  */
 public record AppSettings(
@@ -56,7 +57,8 @@ public record AppSettings(
         int importThreads,
         String importMemory,
         int idSetMemoryMb,
-        int maxJobs) {
+        int maxJobs,
+        boolean splitAsDirectory) {
 
     /** The settings as they were before the speed options existed: those get their defaults. */
     public AppSettings(InstanceSettings.Runner runner, String dockerImage, String neo4jHome, String workDir, String outputDir,
@@ -65,7 +67,7 @@ public record AppSettings(
                        int sampleSize, boolean analyseRelationships) {
         this(runner, dockerImage, neo4jHome, workDir, outputDir, backupDir, mergeSwap, copySchema, checkAfterBuild, tempHeap,
                 tempPageCache, startTimeoutMinutes, orgProperty, includeNeighbours, batchSize, sampleSize, analyseRelationships,
-                true, "", "2g", "2g", defaultWorkers(), 0, "", 512, 2);
+                true, "", "2g", "2g", defaultWorkers(), 0, "", 512, 2, false);
     }
 
     public static int defaultWorkers() {

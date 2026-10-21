@@ -46,7 +46,8 @@ public class SettingsStore {
                 Integer.parseInt(rows.getOrDefault("import_threads", String.valueOf(d.importThreads()))),
                 rows.getOrDefault("import_memory", d.importMemory()),
                 Integer.parseInt(rows.getOrDefault("id_set_memory_mb", String.valueOf(d.idSetMemoryMb()))),
-                Integer.parseInt(rows.getOrDefault("max_jobs", String.valueOf(d.maxJobs()))));
+                Integer.parseInt(rows.getOrDefault("max_jobs", String.valueOf(d.maxJobs()))),
+                Boolean.parseBoolean(rows.getOrDefault("split_as_directory", String.valueOf(d.splitAsDirectory()))));
     }
 
     /** @throws IllegalArgumentException when a value cannot work */
@@ -78,6 +79,7 @@ public class SettingsStore {
         put("import_memory", s.importMemory() == null ? "" : s.importMemory());
         put("id_set_memory_mb", String.valueOf(s.idSetMemoryMb()));
         put("max_jobs", String.valueOf(s.maxJobs()));
+        put("split_as_directory", String.valueOf(s.splitAsDirectory()));
     }
 
     private static void validate(AppSettings s) {

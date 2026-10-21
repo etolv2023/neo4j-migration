@@ -37,9 +37,11 @@
         </div>
         <label class="check"><input type="checkbox" name="mergeSwap" value="true" th:checked="${settings.mergeSwap()}"> A merge into a stopped data directory puts the new database in its place</label>
         <p class="hint">The old database is kept next to it and can be rolled back. Switch it off to only write the merged dump file and swap by hand.</p>
+        <label class="check"><input type="checkbox" name="splitAsDirectory" value="true" th:checked="${settings.splitAsDirectory()}"> A split leaves a data directory instead of a dump file</label>
+        <p class="hint">Saves writing the whole store as a dump and loading it again. The directory has <span class="mono">databases/</span> and <span class="mono">transactions/</span> in it; copy it into a stopped server's data directory, or add it here as a stopped data directory.</p>
         <label class="check"><input type="checkbox" name="copySchema" value="true" th:checked="${settings.copySchema()}"> Create the same indexes and constraints in the new database</label>
         <label class="check"><input type="checkbox" name="checkAfterBuild" value="true" th:checked="${settings.checkAfterBuild()}"> Check the new database (<span class="mono">neo4j-admin database check</span>) before dumping it</label>
-        <p class="hint">The check is thorough and can take a long time on a big database. The comparison with the source always runs.</p>
+        <p class="hint"><b>The check reads every record of the new database and can take hours on billions of nodes.</b> Switch it off to save that time: the comparison with the source (counts, ids and a fingerprint of every node and relationship) always runs and catches a wrong copy.</p>
         <h2 style="margin-top:26px">Speed</h2>
         <p class="sub">For databases with billions of nodes. Every value here changes only how fast the work goes, never what comes out.</p>
         <label class="check"><input type="checkbox" name="fastReader" value="true" th:checked="${settings.fastReader()}"> Read dumps and stopped data directories directly (fast reader)</label>

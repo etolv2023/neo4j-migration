@@ -46,13 +46,14 @@ public class SettingsController {
                 @RequestParam(defaultValue = "2g") String readerHeap, @RequestParam(defaultValue = "2g") String readerPageCache,
                 @RequestParam(defaultValue = "1") int workers, @RequestParam(defaultValue = "0") int importThreads,
                 @RequestParam(defaultValue = "") String importMemory, @RequestParam(defaultValue = "512") int idSetMemoryMb,
-                @RequestParam(defaultValue = "2") int maxJobs, RedirectAttributes redirect) {
+                @RequestParam(defaultValue = "2") int maxJobs,
+                @RequestParam(defaultValue = "false") boolean splitAsDirectory, RedirectAttributes redirect) {
         try {
             settings.save(new AppSettings(runner, dockerImage.strip(), neo4jHome.strip(), workDir.strip(), outputDir.strip(), backupDir.strip(), mergeSwap, copySchema,
                     checkAfterBuild, tempHeap.strip(),
                     tempPageCache.strip(), startTimeoutMinutes, orgProperty.strip(), includeNeighbours, batchSize, sampleSize, analyseRelationships,
                     fastReader, readerLib.strip(), readerHeap.strip(), readerPageCache.strip(), workers, importThreads,
-                    importMemory.strip(), idSetMemoryMb, maxJobs));
+                    importMemory.strip(), idSetMemoryMb, maxJobs, splitAsDirectory));
             audit.record("settings_save", null);
             redirect.addFlashAttribute("message", "Settings saved");
         } catch (IllegalArgumentException e) {
