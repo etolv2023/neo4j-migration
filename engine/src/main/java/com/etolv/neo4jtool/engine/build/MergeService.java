@@ -52,6 +52,16 @@ public final class MergeService {
     public MergeResult run(Neo4jClient source, SelectionConfig selection, MergeTarget target, InstanceRunner runner, Path workDir,
                            Path backupDirectory, Path outputFile, MergeOptions options, DryRunProgress progress,
                            Consumer<String> log) {
+        return run(source, null, selection, target, runner, workDir, backupDirectory, outputFile, options, progress, log);
+    }
+
+    /**
+     * @param sourceFast reads the source with the kernel on all threads when not null. The target is read that way whenever
+     *                   {@code options.build().fastReaders()} is set and its backup can be loaded into a directory.
+     */
+    public MergeResult run(Neo4jClient source, FastReader sourceFast, SelectionConfig selection, MergeTarget target,
+                           InstanceRunner runner, Path workDir, Path backupDirectory, Path outputFile, MergeOptions options,
+                           DryRunProgress progress, Consumer<String> log) {
         boolean swap = target.dataDirectory() && options.swap();
         if (!swap && (outputFile == null || Files.exists(outputFile))) {
             throw new BuildException((outputFile == null ? "Give a file" : outputFile + " already exists")
@@ -68,12 +78,18 @@ public final class MergeService {
             Path backup = backup(runner, target, backupDirectory, workspace, stamp, log);
             log.accept("Backup: " + backup);
 
-            Built built;
-            try (RunningInstance targetServer = runner.startFromDump(backup, database, log);
-                 Neo4jClient targetClient = new Neo4jClient(new ConnectionSettings(targetServer.boltUri(), null, null, database))) {
-                targetClient.verify();
-                built = build(source, targetClient, selection, runner, workspace, database, options, outputFile, swap, phases,
-                        progress, log);
+            Built built = null;
+            if (options.build().fastReaders() != null) {
+                built = buildFast(source, sourceFast, selection, runner, workspace, backup, database, options, outputFile, swap,
+                        phases, progress, log);
+            }
+            if (built == null) {
+                try (RunningInstance targetServer = runner.startFromDump(backup, database, log);
+                     Neo4jClient targetClient = new Neo4jClient(new ConnectionSettings(targetServer.boltUri(), null, null, database))) {
+                    targetClient.verify();
+                    built = build(source, sourceFast, targetClient, null, selection, runner, workspace, database, options,
+                            outputFile, swap, phases, progress, log);
+                }
             }
 
             String keepName = null;
@@ -111,15 +127,43 @@ public final class MergeService {
                          int schemaStatements, Path dump) {
     }
 
-    private Built build(Neo4jClient source, Neo4jClient target, SelectionConfig selection, InstanceRunner runner,
-                        Workspace workspace, String database, MergeOptions options, Path outputFile, boolean swap,
-                        Phases phases, DryRunProgress progress, Consumer<String> log) throws IOException {
+    /**
+     * Loads the backup into a directory and reads it with the fast reader (which also serves Bolt for the few Cypher
+     * questions). Returns null, having changed nothing, when that cannot be done, so that the caller reads the target over
+     * a temporary server instead.
+     */
+    private Built buildFast(Neo4jClient source, FastReader sourceFast, SelectionConfig selection, InstanceRunner runner,
+                            Workspace workspace, Path backup, String database, MergeOptions options, Path outputFile, boolean swap,
+                            Phases phases, DryRunProgress progress, Consumer<String> log) throws IOException {
+        FastReader targetFast;
+        try {
+            phases.start("Loading the backup to read it directly");
+            Path targetData = workspace.directory("target-data");
+            runner.loadDump(backup, database, targetData, log);
+            targetFast = options.build().fastReaders().open(targetData, database, true, log);
+        } catch (RuntimeException e) {
+            log.accept("The fast reader could not be used on the target (" + e.getMessage() + "); reading it over Bolt instead");
+            return null;
+        }
+        try (FastReader opened = targetFast;
+             Neo4jClient targetClient = new Neo4jClient(new ConnectionSettings(opened.boltUri(), null, null, database))) {
+            targetClient.verify();
+            return build(source, sourceFast, targetClient, opened, selection, runner, workspace, database, options, outputFile,
+                    swap, phases, progress, log);
+        }
+    }
+
+    private Built build(Neo4jClient source, FastReader sourceFast, Neo4jClient target, FastReader targetFast,
+                        SelectionConfig selection, InstanceRunner runner, Workspace workspace, String database,
+                        MergeOptions options, Path outputFile, boolean swap, Phases phases, DryRunProgress progress,
+                        Consumer<String> log) throws IOException {
         BuildOptions build = options.build();
         String org = selection.orgProperty();
 
         phases.start("Comparing the selection with the target");
-        IdSet targetIds = Ids.all(target);
-        IdSet selected = Ids.selected(source, selection);
+        IdSet targetIds = targetFast != null ? targetFast.allIds(build.workers(), progress) : Ids.all(target);
+        IdSet selected = sourceFast != null ? sourceFast.select(selection, build.workers(), progress)
+                : Ids.selected(source, selection);
         IdSet missing = selected.minus(targetIds);
         IdSet present = selected.intersect(targetIds);
         IdSet clash = differing(source, target, present, org, build.batchSize());
@@ -138,12 +182,17 @@ public final class MergeService {
 
         Path csv = workspace.directory("csv");
         phases.start("Exporting the target to CSV");
-        CsvExporter.Export targetExport = new CsvExporter(CsvExporter.bolt(target), targetIds,
-                List.of(CsvExporter.Rule.out(targetIds)), "target-", csv, build.batchSize(), build.workers(), progress).export();
+        List<CsvExporter.Rule> targetRules = List.of(CsvExporter.Rule.out(targetIds));
+        CsvExporter.Export targetExport = targetFast != null
+                ? targetFast.export(targetIds, targetRules, "target-", csv, build.batchSize(), build.workers(), progress)
+                : new CsvExporter(CsvExporter.bolt(target), targetIds, targetRules, "target-", csv, build.batchSize(),
+                        build.workers(), progress).export();
         phases.start("Exporting the nodes to restore to CSV");
-        CsvExporter.Export restoredExport = new CsvExporter(CsvExporter.bolt(source), missing,
-                List.of(CsvExporter.Rule.out(allowedEnds), CsvExporter.Rule.in(confirmed)), "restored-", csv, build.batchSize(),
-                build.workers(), progress).export();
+        List<CsvExporter.Rule> restoredRules = List.of(CsvExporter.Rule.out(allowedEnds), CsvExporter.Rule.in(confirmed));
+        CsvExporter.Export restoredExport = sourceFast != null
+                ? sourceFast.export(missing, restoredRules, "restored-", csv, build.batchSize(), build.workers(), progress)
+                : new CsvExporter(CsvExporter.bolt(source), missing, restoredRules, "restored-", csv, build.batchSize(),
+                        build.workers(), progress).export();
         log.accept(restoredExport.nodes() + " nodes and " + restoredExport.relationships() + " relationships restored; "
                 + restoredExport.relationshipsToOutside() + " relationships left out because their other end is not on the target");
 
