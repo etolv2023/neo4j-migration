@@ -39,12 +39,13 @@ public class SettingsController {
                 @RequestParam(defaultValue = "false") boolean mergeSwap,
                 @RequestParam(defaultValue = "false") boolean copySchema, @RequestParam(defaultValue = "false") boolean checkAfterBuild,
                 @RequestParam String tempHeap, @RequestParam String tempPageCache, @RequestParam int startTimeoutMinutes,
-                @RequestParam String orgProperty, @RequestParam int batchSize, @RequestParam int sampleSize,
+                @RequestParam String orgProperty, @RequestParam(defaultValue = "false") boolean includeNeighbours,
+                @RequestParam int batchSize, @RequestParam int sampleSize,
                 @RequestParam(defaultValue = "false") boolean analyseRelationships, RedirectAttributes redirect) {
         try {
             settings.save(new AppSettings(runner, dockerImage.strip(), neo4jHome.strip(), workDir.strip(), outputDir.strip(), backupDir.strip(), mergeSwap, copySchema,
                     checkAfterBuild, tempHeap.strip(),
-                    tempPageCache.strip(), startTimeoutMinutes, orgProperty.strip(), batchSize, sampleSize, analyseRelationships));
+                    tempPageCache.strip(), startTimeoutMinutes, orgProperty.strip(), includeNeighbours, batchSize, sampleSize, analyseRelationships));
             audit.record("settings_save", null);
             redirect.addFlashAttribute("message", "Settings saved");
         } catch (IllegalArgumentException e) {

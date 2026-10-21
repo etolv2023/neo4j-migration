@@ -15,6 +15,8 @@ import java.time.Duration;
  * @param backupDir    where a merge keeps the dump of the stopped target that it takes before building anything
  * @param mergeSwap    a merge into a stopped data directory puts the new database in its place (the old one is kept);
  *                     when off, the merged database is only written as a dump file
+ * @param includeNeighbours the default for new migrations: also move nodes that have no organisation but are connected to
+ *                     a selected node (the lines of an invoice, say); one step only
  * @param copySchema   a split recreates the source's indexes and constraints in the new database
  * @param checkAfterBuild a split runs the store consistency check on the new database before it dumps it
  */
@@ -32,6 +34,7 @@ public record AppSettings(
         String tempPageCache,
         int startTimeoutMinutes,
         String orgProperty,
+        boolean includeNeighbours,
         int batchSize,
         int sampleSize,
         boolean analyseRelationships) {
@@ -41,7 +44,7 @@ public record AppSettings(
                 Path.of(System.getProperty("java.io.tmpdir"), "neo4j-migration").toString(),
                 Path.of(System.getProperty("java.io.tmpdir"), "neo4j-migration-output").toString(),
                 Path.of(System.getProperty("java.io.tmpdir"), "neo4j-migration-backups").toString(), true, true, true,
-                "1g", "1g", 15, "org_id", 10_000, 20, true);
+                "1g", "1g", 15, "org_id", true, 10_000, 20, true);
     }
 
     public InstanceSettings instanceSettings() {

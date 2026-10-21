@@ -14,7 +14,13 @@ import java.util.List;
  * ids: [1001, 1002]           # explicit node ids
  * id_ranges: [[5000, 9000]]   # inclusive id ranges
  * exclude_ids: [77]           # never selected
+ * include_neighbours: true    # also nodes with an empty org property that are directly connected to a selected node
  * </pre>
+ *
+ * <p>With {@code include_neighbours} a node that has no organisation of its own (an invoice line that only belongs to an
+ * invoice) comes along with the nodes it is connected to. Only the first step is followed, and a neighbour that carries
+ * another organisation's value is never added. The label, id and exclusion criteria do not apply to such neighbours,
+ * except that an excluded id stays excluded.
  */
 public record SelectionConfig(
         String orgProperty,
@@ -22,9 +28,15 @@ public record SelectionConfig(
         List<String> labels,
         List<Long> ids,
         List<List<Long>> idRanges,
-        List<Long> excludeIds) {
+        List<Long> excludeIds,
+        boolean includeNeighbours) {
 
     public static final String DEFAULT_ORG_PROPERTY = "org_id";
+
+    public SelectionConfig(String orgProperty, List<Object> orgIds, List<String> labels, List<Long> ids,
+                           List<List<Long>> idRanges, List<Long> excludeIds) {
+        this(orgProperty, orgIds, labels, ids, idRanges, excludeIds, false);
+    }
 
     public SelectionConfig {
         orgProperty = (orgProperty == null || orgProperty.isBlank()) ? DEFAULT_ORG_PROPERTY : orgProperty.trim();
@@ -36,7 +48,12 @@ public record SelectionConfig(
     }
 
     public static SelectionConfig everything() {
-        return new SelectionConfig(null, null, null, null, null, null);
+        return new SelectionConfig(null, null, null, null, null, null, false);
+    }
+
+    /** The same selection with neighbours switched on or off. */
+    public SelectionConfig withNeighbours(boolean include) {
+        return new SelectionConfig(orgProperty, orgIds, labels, ids, idRanges, excludeIds, include);
     }
 
     /** True when no criterion narrows the selection, so every node would be selected. */

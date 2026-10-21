@@ -75,7 +75,30 @@ public record DryRunReport(
             List<RelationshipTypeCounts> byType,
             List<RelationshipSample> danglingSamples,
             List<RelationshipSample> conflictSamples,
-            List<RelationshipSample> boundarySamples) {
+            List<RelationshipSample> boundarySamples,
+            List<LeftOutGroup> leftOut,
+            long leftOutNotListed) {
+    }
+
+    /** Why a relationship of a moved node is not moved with it. */
+    public enum LeftOutReason {
+        /** The other node carries the value of an organisation that is not part of the selection. */
+        OTHER_ORGANISATION,
+        /** The other node has no organisation and is not part of the selection. */
+        NO_ORGANISATION,
+        /** The other node does not exist on the target. */
+        NOT_ON_TARGET,
+        /** The id of the other node is used by a different node on the target. */
+        DIFFERENT_ON_TARGET
+    }
+
+    /**
+     * Relationships that are left out, grouped by what they connect: the labels of the node they start at and of the
+     * node they end at, their type and the reason. {@code otherOrgs} are some of the organisation values of the node
+     * that is not moved; {@code samples} are a few of the relationships.
+     */
+    public record LeftOutGroup(LeftOutReason reason, String type, List<String> fromLabels, List<String> toLabels,
+                               long count, List<Object> otherOrgs, List<RelationshipSample> samples) {
     }
 
     /**

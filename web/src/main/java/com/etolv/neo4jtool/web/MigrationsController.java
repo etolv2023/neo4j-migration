@@ -53,7 +53,7 @@ public class MigrationsController {
 
     @GetMapping("/migrations/new")
     String form(Model model) {
-        fillForm(model, "", null, SelectionForm.empty());
+        fillForm(model, "", null, SelectionForm.empty(settings.get().includeNeighbours()));
         return "migration-new";
     }
 

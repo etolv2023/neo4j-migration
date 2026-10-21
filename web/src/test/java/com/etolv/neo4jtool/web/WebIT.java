@@ -329,6 +329,9 @@ class WebIT {
     void settingsAreSavedValidatedAndUsed() throws Exception {
         mvc.perform(get("/settings").with(ADMIN)).andExpect(status().isOk())
                 .andExpect(content().string(containsString("neo4j:5.26.29-community")));
+        assertThat(settings.get().includeNeighbours()).as("on by default").isTrue();
+        mvc.perform(get("/migrations/new").with(ADMIN))
+                .andExpect(content().string(containsString("name=\"includeNeighbours\" value=\"true\" checked")));
 
         mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "50").with(ADMIN).with(csrf()))
                 .andExpect(flash().attribute("error", containsString("at least 100")));
@@ -340,6 +343,9 @@ class WebIT {
                 .andExpect(flash().attribute("message", "Settings saved"));
         assertThat(settings.get().orgProperty()).isEqualTo("company_id");
         assertThat(settings.get().batchSize()).isEqualTo(500);
+        assertThat(settings.get().includeNeighbours()).as("the form had the box unticked").isFalse();
+        mvc.perform(get("/migrations/new").with(ADMIN))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("name=\"includeNeighbours\" value=\"true\" checked"))));
 
         // the new default shows up where a selection is typed
         mvc.perform(get("/migrations/new").with(ADMIN)).andExpect(content().string(containsString("company_id")));
@@ -490,12 +496,44 @@ class WebIT {
         assertThat(migrations.find(toLive.id()).orElseThrow().state()).isEqualTo(Migration.State.DRY_RUN_DONE);
     }
 
+    @Test
+    @Order(22)
+    void linesWithoutAnOrganisationComeWithTheirParentAndWhatIsLeftOutIsListed() throws Exception {
+        // A line that only belongs to a node of company 1 (no organisation of its own), and a link from company 1 to company 2.
+        run(BACKUP, "MATCH (a) WHERE id(a) = 0 CREATE (:Line {n: 1})-[:PART_OF]->(a)");
+        run(BACKUP, "MATCH (a) WHERE id(a) = 0 MATCH (b) WHERE id(b) = 12 CREATE (a)-[:SEES]->(b)");
+        long id = createMigration("org 1 and its lines", "backup", null, Map.of("orgIds", "1", "includeNeighbours", "true"));
+        assertThat(migrations.find(id).orElseThrow().selectionYaml()).contains("include_neighbours: true");
+
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));
+        Migration planned = awaitState(id, Migration.State.PLANNED);
+        MigrationPlan plan = com.etolv.neo4jtool.engine.Json.read(planned.planJson(), MigrationPlan.class);
+        assertThat(plan.selectedNodes()).isEqualTo(11);
+        assertThat(plan.neighbourNodes()).isEqualTo(1);
+        assertThat(plan.neighbourLabels()).containsExactly(new MigrationPlan.LabelCount("Line", 1));
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(content().string(containsString("come along because they are")));
+
+        mvc.perform(post("/migrations/" + id + "/dry-run").with(ADMIN).with(csrf()));
+        Migration done = awaitState(id, Migration.State.DRY_RUN_DONE);
+        mvc.perform(get("/dry-runs/" + done.dryRunId()).with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("Relationships that are not moved")))
+                .andExpect(content().string(containsString("The other node belongs to another organisation")))
+                .andExpect(content().string(containsString("<span> (2)</span>")))
+                .andExpect(content().string(containsString("SEES")));
+
+        long without = createMigration("org 1 only", "backup", null, Map.of("orgIds", "1"));
+        mvc.perform(post("/migrations/" + without + "/plan").with(ADMIN).with(csrf()));
+        MigrationPlan plain = com.etolv.neo4jtool.engine.Json.read(awaitState(without, Migration.State.PLANNED).planJson(), MigrationPlan.class);
+        assertThat(plain.selectedNodes()).isEqualTo(10);
+        assertThat(plain.neighbourNodes()).isZero();
+    }
+
     // ---- helpers ----
 
     private void useDirectories(java.nio.file.Path output, java.nio.file.Path backups) {
         AppSettings c = settings.get();
         settings.save(new AppSettings(c.runner(), c.dockerImage(), c.neo4jHome(), c.workDir(), output.toString(), backups.toString(),
-                true, true, false, c.tempHeap(), c.tempPageCache(), c.startTimeoutMinutes(), c.orgProperty(), c.batchSize(),
+                true, true, false, c.tempHeap(), c.tempPageCache(), c.startTimeoutMinutes(), c.orgProperty(), c.includeNeighbours(), c.batchSize(),
                 c.sampleSize(), c.analyseRelationships()));
     }
 

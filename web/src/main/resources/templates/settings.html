@@ -48,6 +48,8 @@
                 <p class="hint">Bigger is faster until the server gets slow. At least 100.</p></div>
             <div><label for="sampleSize">Examples per report section</label><input id="sampleSize" name="sampleSize" type="number" min="0" th:value="${settings.sampleSize()}"></div>
         </div>
+        <label class="check"><input type="checkbox" name="includeNeighbours" value="true" th:checked="${settings.includeNeighbours()}"> New migrations also move nodes that have no organisation but are connected to a selected node</label>
+        <p class="hint">For example the lines of an invoice when only the invoice carries the company. One step only; a node that carries another company's value is never added. Each migration can switch it off.</p>
         <label class="check"><input type="checkbox" name="analyseRelationships" value="true" th:checked="${settings.analyseRelationships()}"> Check relationships in the dry run</label>
         <p class="hint">Switch it off to make a dry run faster when you only care about nodes.</p>
         <p><button type="submit">Save settings</button></p>

@@ -1,6 +1,8 @@
 package com.etolv.neo4jtool.engine.dryrun;
 
 import com.etolv.neo4jtool.engine.conn.Neo4jClient;
+import com.etolv.neo4jtool.engine.dryrun.DryRunReport.LeftOutGroup;
+import com.etolv.neo4jtool.engine.dryrun.DryRunReport.LeftOutReason;
 import com.etolv.neo4jtool.engine.dryrun.DryRunReport.RelationshipAnalysis;
 import com.etolv.neo4jtool.engine.dryrun.DryRunReport.RelationshipSample;
 import com.etolv.neo4jtool.engine.dryrun.DryRunReport.RelationshipTypeCounts;
@@ -10,8 +12,11 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import org.neo4j.driver.Record;
 import org.neo4j.driver.Result;
@@ -26,7 +31,21 @@ final class RelationshipAnalyzer {
     private static final String QUERY = "MATCH (a)-[r]-(b) WHERE id(a) IN $ids "
             + "RETURN id(r) AS rid, type(r) AS type, id(startNode(r)) AS s, id(endNode(r)) AS e, id(a) AS a";
 
+    private static final int MAX_LEFT_OUT_GROUPS = 100;
+    private static final int SAMPLES_PER_GROUP = 3;
+    private static final int ORGS_PER_GROUP = 5;
+
     private enum Kind { INTERNAL, RESOLVED, CONFLICT, DANGLING, BOUNDARY }
+
+    /** What is counted for one kind of left-out relationship: from, to, type and reason. */
+    private record GroupKey(LeftOutReason reason, String type, List<String> fromLabels, List<String> toLabels) {
+    }
+
+    private static final class Group {
+        long count;
+        final Set<Object> orgs = new LinkedHashSet<>();
+        final List<RelationshipSample> samples = new ArrayList<>();
+    }
 
     private record Pending(long id, String type, long start, long end, long other) {
     }
@@ -50,6 +69,7 @@ final class RelationshipAnalyzer {
     private final List<RelationshipSample> danglingSamples = new ArrayList<>();
     private final List<RelationshipSample> conflictSamples = new ArrayList<>();
     private final List<RelationshipSample> boundarySamples = new ArrayList<>();
+    private final Map<GroupKey, Group> leftOut = new LinkedHashMap<>();
     private long total;
 
     RelationshipAnalyzer(Neo4jClient source, Neo4jClient target, SelectedNodes nodes, String orgProperty,
@@ -109,10 +129,11 @@ final class RelationshipAnalyzer {
                     record(Kind.INTERNAL, id, type, start, end);
                 } else if (otherIndex >= 0 && target != null) {
                     // The other end is selected but not restored: it is the same node as on the target, or a clash.
-                    record(nodes.status(otherIndex) == DryRunService.SAME ? Kind.RESOLVED : Kind.CONFLICT,
-                            id, type, start, end);
-                } else if (target == null) {
-                    record(Kind.BOUNDARY, id, type, start, end);
+                    Kind kind = nodes.status(otherIndex) == DryRunService.SAME ? Kind.RESOLVED : Kind.CONFLICT;
+                    record(kind, id, type, start, end);
+                    if (kind == Kind.CONFLICT) {
+                        leave(Kind.CONFLICT, id, type, start, end, a, new NodeRow(nodes.labelsOf(otherIndex), nodes.orgOf(otherIndex)));
+                    }
                 } else {
                     pending.add(new Pending(id, type, start, end, other));
                 }
@@ -121,7 +142,10 @@ final class RelationshipAnalyzer {
         resolvePending(pending);
     }
 
-    /** The other end is not part of the selection, so compare what the source and the target hold at its id. */
+    /**
+     * The other end is not part of the selection. Without a target the relationship is simply left out; with one,
+     * compare what the source and the target hold at its id.
+     */
     private void resolvePending(List<Pending> pending) {
         if (pending.isEmpty()) {
             return;
@@ -129,19 +153,47 @@ final class RelationshipAnalyzer {
         LongOpenHashSet others = new LongOpenHashSet();
         pending.forEach(p -> others.add(p.other()));
         long[] otherIds = others.toLongArray();
-        Long2ObjectOpenHashMap<NodeRow> onTarget = NodeRows.fetch(target, otherIds, orgProperty);
         Long2ObjectOpenHashMap<NodeRow> onSource = NodeRows.fetch(source, otherIds, orgProperty);
+        Long2ObjectOpenHashMap<NodeRow> onTarget = target == null ? null : NodeRows.fetch(target, otherIds, orgProperty);
         for (Pending p : pending) {
-            NodeRow t = onTarget.get(p.other());
+            NodeRow s = onSource.get(p.other());
             Kind kind;
-            if (t == null) {
-                kind = Kind.DANGLING;
+            if (target == null) {
+                kind = Kind.BOUNDARY;
             } else {
-                NodeRow s = onSource.get(p.other());
-                kind = t.equals(s) ? Kind.RESOLVED : Kind.CONFLICT;
+                NodeRow t = onTarget.get(p.other());
+                kind = t == null ? Kind.DANGLING : t.equals(s) ? Kind.RESOLVED : Kind.CONFLICT;
             }
             record(kind, p.id(), p.type(), p.start(), p.end());
+            if (kind != Kind.RESOLVED) {
+                leave(kind, p.id(), p.type(), p.start(), p.end(), p.start() == p.other() ? p.end() : p.start(),
+                        s == null ? new NodeRow(List.of(), null) : s);
+            }
         }
+    }
+
+    /** Counts a relationship that is not moved under what it connects and why, for the report. */
+    private void leave(Kind kind, long id, String type, long start, long end, long inScope, NodeRow other) {
+        NodeRow own = new NodeRow(nodes.labelsOf(nodes.indexOf(inScope)), nodes.orgOf(nodes.indexOf(inScope)));
+        boolean ownIsStart = start == inScope;
+        LeftOutReason reason = switch (kind) {
+            case DANGLING -> LeftOutReason.NOT_ON_TARGET;
+            case CONFLICT -> LeftOutReason.DIFFERENT_ON_TARGET;
+            default -> hasOrganisation(other.org()) ? LeftOutReason.OTHER_ORGANISATION : LeftOutReason.NO_ORGANISATION;
+        };
+        GroupKey key = new GroupKey(reason, type, (ownIsStart ? own : other).labels(), (ownIsStart ? other : own).labels());
+        Group group = leftOut.computeIfAbsent(key, k -> new Group());
+        group.count++;
+        if (hasOrganisation(other.org()) && group.orgs.size() < ORGS_PER_GROUP) {
+            group.orgs.add(other.org());
+        }
+        if (group.samples.size() < SAMPLES_PER_GROUP) {
+            group.samples.add(new RelationshipSample(id, type, start, end));
+        }
+    }
+
+    private static boolean hasOrganisation(Object org) {
+        return org != null && !"".equals(org);
     }
 
     private void record(Kind kind, long id, String type, long start, long end) {
@@ -187,7 +239,13 @@ final class RelationshipAnalyzer {
         danglingSamples.sort(byId);
         conflictSamples.sort(byId);
         boundarySamples.sort(byId);
+        List<LeftOutGroup> groups = new ArrayList<>();
+        leftOut.forEach((k, g) -> groups.add(new LeftOutGroup(k.reason(), k.type(), k.fromLabels(), k.toLabels(), g.count,
+                List.copyOf(g.orgs), g.samples)));
+        groups.sort(Comparator.comparingLong(LeftOutGroup::count).reversed().thenComparing(LeftOutGroup::type));
+        long notListed = groups.stream().skip(MAX_LEFT_OUT_GROUPS).mapToLong(LeftOutGroup::count).sum();
         return new RelationshipAnalysis(target == null ? "selected-nodes" : "missing-nodes", total, internal,
-                resolved, conflict, dangling, boundary, types, danglingSamples, conflictSamples, boundarySamples);
+                resolved, conflict, dangling, boundary, types, danglingSamples, conflictSamples, boundarySamples,
+                groups.stream().limit(MAX_LEFT_OUT_GROUPS).toList(), notListed);
     }
 }

@@ -10,13 +10,19 @@ import java.util.regex.Pattern;
  * The selection as typed into the form: plain text fields that become a {@link SelectionConfig}.
  * Lists are separated by commas, spaces or new lines; an id range is written {@code 5000-9000}.
  */
-public record SelectionForm(String orgProperty, String orgIds, String labels, String ids, String idRanges, String excludeIds) {
+public record SelectionForm(String orgProperty, String orgIds, String labels, String ids, String idRanges, String excludeIds,
+                            Boolean includeNeighbours) {
+
+    /** A ticked box arrives as "true"; an unticked one does not arrive at all. */
+    public SelectionForm {
+        includeNeighbours = Boolean.TRUE.equals(includeNeighbours);
+    }
 
     private static final Pattern SEPARATORS = Pattern.compile("[,;\\s]+");
     private static final Pattern RANGE = Pattern.compile("(\\d+)\\s*(?:-|\\.\\.|:)\\s*(\\d+)");
 
-    public static SelectionForm empty() {
-        return new SelectionForm("", "", "", "", "", "");
+    public static SelectionForm empty(boolean includeNeighbours) {
+        return new SelectionForm("", "", "", "", "", "", includeNeighbours);
     }
 
     /** @throws IllegalArgumentException with a message that names the field that is wrong */
@@ -36,7 +42,7 @@ public record SelectionForm(String orgProperty, String orgIds, String labels, St
             throw new IllegalArgumentException("Id ranges: write them as 5000-9000, separated by commas or lines (got '" + idRanges.strip() + "')");
         }
         return new SelectionConfig(blank(orgProperty) ? defaultOrgProperty : orgProperty.strip(), orgs, tokens(labels),
-                numbers(ids, "Ids"), ranges, numbers(excludeIds, "Excluded ids"));
+                numbers(ids, "Ids"), ranges, numbers(excludeIds, "Excluded ids"), includeNeighbours);
     }
 
     private static List<Long> numbers(String text, String field) {

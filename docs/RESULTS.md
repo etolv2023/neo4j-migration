@@ -194,3 +194,30 @@ Limits: the Run is experimental until it is tried on a copy of the real database
 organisation property only; relationship ids change for the whole database; a relationship of a restored node is restored only
 when its other end is on the target as the same node (or restored too); the store size depends on the highest node id; the
 target's server must stay stopped; the local runner's swap needs `sh`, `mv`, `chown` and `stat -c`.
+
+## Connected nodes without an organisation
+
+Only the parent often carries the company (an invoice has `org_id`, its lines do not). The selection can now also take the nodes
+that are directly connected to a selected node and have a missing or empty organisation property (`include_neighbours: true`;
+on by default in the dashboard as a setting, off in the engine and the CLI). One step only; a node that carries another
+company's value is never added; the label and id criteria do not apply to the added nodes, an excluded id stays excluded. The
+expansion is a Cypher `UNION` in `SelectionQueryBuilder`, so the plan, the dry run, a split and a merge all use the same
+selection, and the work happens in the database, not in the tool.
+
+The dry run lists the relationships of moved nodes that are not moved, grouped by from-label, type, to-label and reason (another
+organisation, no organisation and not added, not on the target, a different node on the target), with counts, the other
+nodes' organisation values and examples. The plan counts the added nodes by label.
+
+Tests: `NeighbourSelectionIT` (9 tests, real Neo4j): an invoice with lines that have no organisation, an empty one, another
+company's value, a line shared by two companies' invoices, a product two steps away, and a shared company; checks the selected
+ids for each case (with and without the option, with a label filter, with an exclusion), the counts by label, the report
+groups with their reasons, that a shared company chosen together makes its relationship internal, that a null-organisation node
+is "the same node" on a target when its labels match, and a split into a dump that holds exactly the expected nodes and
+relationships. `SelectionQueryBuilderTest` covers the generated Cypher; `WebIT` the form, the setting, the plan and the report
+page.
+
+Limits: the lines are found only through a direct relationship from a node that was selected by the other criteria; a chain
+(invoice, line, line detail) needs the detail selected by label or id. A node with no organisation that is shared by several
+companies' invoices comes with each of them (a split copies it; a merge compares it by labels and organisation only).
+
+`mvn clean verify` passes with these: 110 tests (33 engine and 11 dashboard unit tests; 39 engine, 5 CLI and 22 dashboard integration tests).

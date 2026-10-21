@@ -118,6 +118,7 @@ The *New migration* page has these fields. Leave a field empty to not filter on 
 | Id ranges | inclusive ranges written `5000-9000`, one per line or separated by commas |
 | Never move these ids | exceptions; they win over everything else |
 | Organisation property | the property that holds the company id (default from Settings, `org_id`) |
+| Also move nodes without an organisation that are connected to a selected node | see "Nodes that carry no company" below (on by default; a setting) |
 
 Rules, so that the result is never a surprise:
 
@@ -128,6 +129,27 @@ Rules, so that the result is never a surprise:
 - Lists accept commas, spaces or new lines.
 
 Example: organisations `12, 45`, label `Booking`, never `77` selects Booking nodes of those two companies, except node 77.
+
+### Nodes that carry no company
+
+Often only the parent holds the company id: an invoice has `org_id`, its lines do not. A selection by company alone would move
+the invoice and leave its lines behind. With the box **Also move nodes that have no organisation but are connected to a selected
+node** ticked (default on; change the default in Settings), the tool adds, after the normal selection:
+
+- every node that is **directly connected** (either direction, any relationship type) to a selected node, and
+- whose organisation property is **missing or empty**.
+
+Only this first step is followed, and a connected node that carries **another company's value is never added**. A node two steps
+away (the product a line points to) is not added either, because nodes like that are often shared by every company; if it is
+needed, select it by label or id. The label, id and range fields do not apply to the added nodes, but *Never move these ids*
+does. A shared company (countries, cities) is moved together with yours by listing both ids in *Organisation ids*; the
+relationships between them are then moved like any others.
+
+The plan says how many nodes were added and under which labels. In the dry run, the section **Relationships that are not moved**
+lists every relationship of a moved node that leads to a node that is not moved, grouped by *from label, relationship type, to
+label* and the reason: the other node belongs to another organisation (which one), it has no organisation and was not added, it
+does not exist on the target, or its id holds a different node on the target. Each group has a count and a few examples.
+Look at this list before you run.
 
 ## 6. Plan, dry run and reading the report
 
@@ -254,6 +276,7 @@ Things to know:
 | Heap / page cache | memory of the temporary server (default 1g each); raise for big dumps |
 | Wait up to (minutes) | how long a temporary server may take to start |
 | Organisation property | default for new migrations |
+| Also move connected nodes without an organisation | default for the box of the same name on new migrations; each migration can change it |
 | Ids per query | batch size of the dry run (min 100; default 10,000) |
 | Examples per section | how many example rows the report keeps |
 | Check relationships | switch off to make the dry run faster |

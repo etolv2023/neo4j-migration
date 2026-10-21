@@ -10,12 +10,12 @@ import org.junit.jupiter.api.Test;
 class SelectionFormTest {
 
     private static SelectionForm form(String orgProperty, String orgIds, String labels, String ids, String ranges, String exclude) {
-        return new SelectionForm(orgProperty, orgIds, labels, ids, ranges, exclude);
+        return new SelectionForm(orgProperty, orgIds, labels, ids, ranges, exclude, false);
     }
 
     @Test
     void anEmptyFormIsAnEmptySelectionWithTheDefaultOrganisationProperty() {
-        SelectionConfig c = SelectionForm.empty().toConfig("org_id");
+        SelectionConfig c = SelectionForm.empty(false).toConfig("org_id");
 
         assertThat(c.orgProperty()).isEqualTo("org_id");
         assertThat(c.selectsEverything()).isTrue();

@@ -34,6 +34,7 @@ public class SettingsStore {
                 rows.getOrDefault("temp_page_cache", d.tempPageCache()),
                 Integer.parseInt(rows.getOrDefault("start_timeout_minutes", String.valueOf(d.startTimeoutMinutes()))),
                 rows.getOrDefault("org_property", d.orgProperty()),
+                Boolean.parseBoolean(rows.getOrDefault("include_neighbours", String.valueOf(d.includeNeighbours()))),
                 Integer.parseInt(rows.getOrDefault("batch_size", String.valueOf(d.batchSize()))),
                 Integer.parseInt(rows.getOrDefault("sample_size", String.valueOf(d.sampleSize()))),
                 Boolean.parseBoolean(rows.getOrDefault("analyse_relationships", String.valueOf(d.analyseRelationships()))));
@@ -55,6 +56,7 @@ public class SettingsStore {
         put("temp_page_cache", s.tempPageCache());
         put("start_timeout_minutes", String.valueOf(s.startTimeoutMinutes()));
         put("org_property", s.orgProperty());
+        put("include_neighbours", String.valueOf(s.includeNeighbours()));
         put("batch_size", String.valueOf(s.batchSize()));
         put("sample_size", String.valueOf(s.sampleSize()));
         put("analyse_relationships", String.valueOf(s.analyseRelationships()));

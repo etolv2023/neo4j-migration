@@ -49,6 +49,10 @@
                 <div class="stat" th:if="${plan.to() != null}"><div class="l">Target nodes</div><div class="big" th:text="${@fmt.number(plan.to().nodes())}"></div></div>
                 <div class="stat"><div class="l">Dry run, roughly</div><div class="big" th:text="${@fmt.duration(plan.estimatedDryRunSeconds())}"></div></div>
             </div>
+            <p class="sub" style="margin-top:14px" th:if="${plan.neighbourNodes() > 0}">
+                <b th:text="${@fmt.number(plan.neighbourNodes())}"></b> of the selected nodes have no organisation of their own and come along because they are
+                connected to a selected node:
+                <span th:each="l, it : ${plan.neighbourLabels()}"><span class="mono" th:text="${l.label()}"></span> <span th:text="${@fmt.number(l.count())}"></span><span th:if="${!it.last}">, </span></span>.</p>
             <div class="flash warn" style="margin-top:14px" th:each="w : ${plan.warnings()}" th:text="${w}"></div>
             <table class="kv" style="margin-top:10px">
                 <thead><tr><th></th><th>From</th><th th:if="${plan.to() != null}">To</th></tr></thead>

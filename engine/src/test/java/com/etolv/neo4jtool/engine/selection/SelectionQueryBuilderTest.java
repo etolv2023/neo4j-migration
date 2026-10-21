@@ -83,4 +83,32 @@ class SelectionQueryBuilderTest {
 
         assertThat(query.text()).startsWith("MATCH (n:`x``) DETACH DELETE (n //`)");
     }
+
+    @Test
+    void neighboursAreAUnionOfTheSelectionAndTheNodesWithoutAnOrganisationNextToIt() {
+        CypherQuery query = SelectionQueryBuilder.nodeStream(SelectionConfigParser.parse("""
+                org_ids: [3]
+                exclude_ids: [9]
+                include_neighbours: true
+                """));
+
+        assertThat(query.text()).isEqualTo(
+                "MATCH (n) WHERE n.`org_id` IN $orgIds AND NOT id(n) IN $excludeIds "
+                        + "RETURN id(n) AS id, labels(n) AS labels, n.`org_id` AS org UNION "
+                        + "MATCH (n)--(m) WHERE n.`org_id` IN $orgIds AND NOT id(n) IN $excludeIds "
+                        + "AND (m.`org_id` IS NULL OR m.`org_id` = '') AND NOT id(m) IN $excludeIds "
+                        + "RETURN id(m) AS id, labels(m) AS labels, m.`org_id` AS org");
+        assertThat(SelectionQueryBuilder.nodeCount(SelectionConfigParser.parse("org_ids: [3]\ninclude_neighbours: true")).text())
+                .startsWith("CALL { MATCH (n)").endsWith(" } RETURN count(id) AS c");
+    }
+
+    @Test
+    void neighboursMeanNothingWhenEverythingIsSelectedAndTheOptionIsOffByDefault() {
+        assertThat(SelectionQueryBuilder.nodeStream(SelectionConfigParser.parse("include_neighbours: true")).text())
+                .isEqualTo(SelectionQueryBuilder.nodeStream(SelectionConfig.everything()).text());
+        assertThat(SelectionConfigParser.parse("org_ids: [1]").includeNeighbours()).isFalse();
+        assertThat(SelectionConfigParser.parse("org_ids: [1]\ninclude_neighbours: true").includeNeighbours()).isTrue();
+        assertThat(SelectionConfigParser.parse(SelectionConfigParser.toYaml(
+                SelectionConfigParser.parse("org_ids: [1]").withNeighbours(true))).includeNeighbours()).isTrue();
+    }
 }

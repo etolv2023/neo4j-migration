@@ -58,7 +58,9 @@
                     <input id="orgProperty" name="orgProperty" type="text" th:value="${selection.orgProperty()}" th:placeholder="${defaultOrgProperty}">
                     <p class="hint">Leave empty for the default.</p></div>
             </div>
-            <p class="hint">Leaving all of them empty selects <b>every node</b>. The plan will warn you.</p>
+            <label class="check"><input type="checkbox" name="includeNeighbours" value="true" th:checked="${selection.includeNeighbours()}"> Also move nodes that have no organisation but are connected to a selected node</label>
+            <p class="hint">For example the lines of an invoice when only the invoice carries the company. One step only. A connected node that has no organisation value (or an empty one) comes along; one that carries another company's value never does. The relationships that are left out are listed in the dry run.</p>
+            <p class="hint">Leaving all of the fields above empty selects <b>every node</b>. The plan will warn you.</p>
         </div>
         <div class="actions"><button type="submit">Create migration</button><a class="btn secondary" th:href="@{/migrations}">Cancel</a></div>
     </form>

@@ -12,11 +12,17 @@ public record MigrationPlan(
         SelectionConfig selection,
         boolean selectsEverything,
         long selectedNodes,
+        long neighbourNodes,
+        List<LabelCount> neighbourLabels,
         long highestSelectedId,
         long estimatedNodeStoreBytes,
         long estimatedDryRunSeconds,
         List<Step> steps,
         List<String> warnings) {
+
+    /** How many nodes of one label. */
+    public record LabelCount(String label, long count) {
+    }
 
     public record Side(String name, String kind, String serverVersion, String database, long nodes, long relationships,
                        int indexes, int constraints) {

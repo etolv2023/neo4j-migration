@@ -6,11 +6,15 @@ import com.etolv.neo4jtool.engine.schema.SchemaSnapshot;
 import com.etolv.neo4jtool.engine.selection.CypherQuery;
 import com.etolv.neo4jtool.engine.selection.SelectionConfig;
 import com.etolv.neo4jtool.engine.selection.SelectionQueryBuilder;
+import com.etolv.neo4jtool.web.MigrationPlan.LabelCount;
 import com.etolv.neo4jtool.web.MigrationPlan.Side;
 import com.etolv.neo4jtool.web.MigrationPlan.Step;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import org.neo4j.driver.Session;
 import org.springframework.stereotype.Component;
 
@@ -36,6 +40,8 @@ public class Planner {
             selected = row.get("c").asLong();
             highestId = row.get("maxId").isNull() ? -1 : row.get("maxId").asLong();
         }
+        List<LabelCount> neighbourLabels = neighbourLabels(from, selection);
+        long neighbours = neighbourLabels.isEmpty() ? 0 : selected - selectedWithout(from, selection);
 
         List<String> warnings = new ArrayList<>();
         if (selection.selectsEverything()) {
@@ -68,8 +74,45 @@ public class Planner {
         }
 
         return new MigrationPlan(Instant.now().toString(), target == null ? "SPLIT" : "MERGE", fromSide, toSide, selection,
-                selection.selectsEverything(), selected, highestId, storeBytes, Math.max(1, selected / NODES_PER_SECOND),
+                selection.selectsEverything(), selected, neighbours, neighbourLabels, highestId, storeBytes, Math.max(1, selected / NODES_PER_SECOND),
                 steps(source, target), warnings);
+    }
+
+    /**
+     * The nodes that come along only because they are connected to a selected node, by label: what the selection holds
+     * with neighbours minus what it holds without them.
+     */
+    private static List<LabelCount> neighbourLabels(Neo4jClient from, SelectionConfig selection) {
+        if (!selection.includeNeighbours() || selection.selectsEverything()) {
+            return List.of();
+        }
+        Map<String, Long> counts = new TreeMap<>();
+        labelCounts(from, selection).forEach((label, count) -> counts.put(label, count));
+        labelCounts(from, selection.withNeighbours(false)).forEach((label, count) -> counts.merge(label, -count, Long::sum));
+        List<LabelCount> result = new ArrayList<>();
+        counts.forEach((label, count) -> {
+            if (count > 0) {
+                result.add(new LabelCount(label, count));
+            }
+        });
+        result.sort(Comparator.comparingLong(LabelCount::count).reversed().thenComparing(LabelCount::label));
+        return result;
+    }
+
+    private static long selectedWithout(Neo4jClient from, SelectionConfig selection) {
+        CypherQuery query = SelectionQueryBuilder.nodeCount(selection.withNeighbours(false));
+        try (Session session = from.readSession()) {
+            return session.run(query.text(), query.params()).single().get("c").asLong();
+        }
+    }
+
+    private static Map<String, Long> labelCounts(Neo4jClient client, SelectionConfig selection) {
+        CypherQuery query = SelectionQueryBuilder.labelCounts(selection);
+        Map<String, Long> counts = new TreeMap<>();
+        try (Session session = client.readSession()) {
+            session.run(query.text(), query.params()).forEachRemaining(r -> counts.put(r.get("label").asString(), r.get("c").asLong()));
+        }
+        return counts;
     }
 
     private static List<Step> steps(Endpoint source, Endpoint target) {

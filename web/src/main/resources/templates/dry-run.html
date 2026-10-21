@@ -68,6 +68,27 @@
                     <td class="num" th:text="${@fmt.number(t.internal())}"></td><td class="num" th:text="${@fmt.number(t.resolved())}"></td>
                     <td class="num" th:text="${@fmt.number(t.conflict())}"></td><td class="num" th:text="${@fmt.number(t.dangling())}"></td>
                     <td class="num" th:text="${@fmt.number(t.boundary())}"></td></tr></tbody></table>
+            <th:block th:if="${report.relationships().leftOut() != null && !report.relationships().leftOut().isEmpty()}">
+                <h2 style="margin-top:18px">Relationships that are not moved</h2>
+                <p>These relationships belong to nodes that are moved, but they lead to a node that is not moved with them, so they are left out.
+                    Check that nothing in this list is something you need.</p>
+                <table><thead><tr><th>From</th><th>Relationship</th><th>To</th><th>Why it is left out</th><th class="num">Count</th><th>Examples (relationship: from → to)</th></tr></thead>
+                    <tbody><tr th:each="g : ${report.relationships().leftOut()}">
+                        <td th:text="${g.fromLabels().isEmpty() ? '(no labels)' : #strings.listJoin(g.fromLabels(), ' · ')}"></td>
+                        <td class="mono" th:text="${g.type()}"></td>
+                        <td th:text="${g.toLabels().isEmpty() ? '(no labels)' : #strings.listJoin(g.toLabels(), ' · ')}"></td>
+                        <td th:switch="${g.reason().name()}">
+                            <span th:case="'OTHER_ORGANISATION'">The other node belongs to another organisation<span th:if="${!g.otherOrgs().isEmpty()}" th:text="${' (' + #strings.listJoin(g.otherOrgs(), ', ') + ')'}"></span></span>
+                            <span th:case="'NO_ORGANISATION'">The other node has no organisation and was not added (following neighbours is off, or it is two steps away from the selected nodes)</span>
+                            <span th:case="'NOT_ON_TARGET'">The other node does not exist on the target<span th:if="${!g.otherOrgs().isEmpty()}" th:text="${' (organisation ' + #strings.listJoin(g.otherOrgs(), ', ') + ')'}"></span></span>
+                            <span th:case="'DIFFERENT_ON_TARGET'">The other node's id holds a different node on the target</span>
+                        </td>
+                        <td class="num" th:text="${@fmt.number(g.count())}"></td>
+                        <td class="mono"><span th:each="x, it : ${g.samples()}" th:text="${x.id() + ': ' + x.startNode() + ' → ' + x.endNode() + (it.last ? '' : '; ')}"></span></td>
+                    </tr></tbody></table>
+                <p class="hint" th:if="${report.relationships().leftOutNotListed() > 0}"
+                   th:text="${@fmt.number(report.relationships().leftOutNotListed()) + ' more relationships are in groups that are not listed here. The full report (JSON) has the first 100 groups.'}"></p>
+            </th:block>
             <p class="hint"><b>Internal</b>: both ends are restored together. <b>Resolved</b>: the other end is already on the target. <b>Conflict</b>: the other end's id holds a different node.
                 <b>Dangling</b>: the other end does not exist on the target. <b>Outside selection</b>: there is no target and the other end is not selected.</p>
         </div>
