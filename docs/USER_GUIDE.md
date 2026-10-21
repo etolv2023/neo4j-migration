@@ -53,6 +53,30 @@ reverse proxy with TLS; the dashboard has no TLS of its own.
 - Run the dashboard **on the machine that has the dumps or data directories** (or can mount them). Paths you type are paths on
   that machine.
 
+### Install on a server without Docker
+
+`deploy/neo4j-migration.sh` builds, runs and updates the dashboard with nothing but Java 21, Maven, git and MySQL. In
+Settings choose **A Neo4j installation on this machine** (the folder that has `bin/neo4j-admin`) so that dumps are loaded
+without Docker.
+
+    deploy/neo4j-migration.sh init       # folders under /opt/neo4j-migration, an empty settings file, checks what is missing
+    sudoedit /etc/neo4j-migration/env    # MySQL, TOOL_SECRET, first admin (the file is mode 600; the script never prints it)
+    deploy/neo4j-migration.sh build      # tests skipped; add --with-tests to run them
+    deploy/neo4j-migration.sh start      # then open http://127.0.0.1:8080
+    deploy/neo4j-migration.sh status | stop | restart | logs
+
+- **Update:** `deploy/neo4j-migration.sh update` does `git pull`, builds a new release and restarts. If the build fails the
+  running dashboard is not touched. A migration that is running when it restarts is stopped and shown as failed.
+- **Roll back:** `deploy/neo4j-migration.sh rollback` runs the release before the current one and keeps it until the next
+  build. The last 5 releases are kept in `/opt/neo4j-migration/releases/`; each has the dashboard jar and the fast reader's jars
+  (`reader-lib`), so nothing depends on the checkout afterwards.
+- **Where things are:** log `/opt/neo4j-migration/logs/dashboard.log`, settings `/etc/neo4j-migration/env`. Override with
+  `NM_HOME`, `NM_ENV`, `NM_REPO`, `NM_BRANCH`; `JAVA_OPTS` (default `-Xmx2g`) and `SERVER_PORT` go in the settings file.
+- **User:** run it as a user that can write to the Neo4j data folders you read in place and to the work and output folders. The
+  script does not need root except to create `/etc/neo4j-migration` the first time.
+- It starts the dashboard in the background and does not restart it after a reboot; if you want that, run `start` from your
+  system's boot mechanism.
+
 ## 3. The flow
 
 1. **Databases** — tell the tool where the backup and the live database are (section 4). Each is one of three kinds.
