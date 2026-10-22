@@ -49,11 +49,13 @@ class MergedLayoutsIT {
         source = Neo4jFixture.start();
         StringBuilder cypher = new StringBuilder();
         for (int i = 1; i <= LABEL_SETS; i++) {
-            // two nodes per label set with different subsets of the 30 shared properties (even ones are text, odd ones numbers)
+            // two nodes per label set with different subsets of the 30 shared properties (even ones are text, odd ones numbers);
+            // every label set has a subset of its own, so without sharing every one of them is a layout of its own
+            int mask = (i * 53) % 256;
             for (int node = 0; node < 2; node++) {
                 cypher.append("CREATE (:Many:L").append(i).append(" {org_id: 1");
                 for (int key = 0; key < KEYS; key++) {
-                    if (((i * 7 + key * 3 + node) % 5) < 2) {
+                    if (((mask >> (key % 8)) & 1) == 1 && (node == 0 || key % 3 != 0)) {
                         cypher.append(", k").append(key).append(": ").append(key % 2 == 0 ? "'t" + i + "_" + key + "_" + node + "'" : String.valueOf(i * 100 + key + node));
                     }
                 }
@@ -92,11 +94,11 @@ class MergedLayoutsIT {
         int narrow = split("narrow", 6);
 
         // without sharing every label set that differs in its properties is a layout of its own
-        assertThat(separate).isGreaterThan(LABEL_SETS / 2);
+        assertThat(separate).as("layouts without sharing").isGreaterThan(LABEL_SETS / 2);
         // with sharing: the layouts of the two types of 'v', and of the label set with several types, and a few more
-        assertThat(shared).isLessThan(12);
+        assertThat(shared).as("layouts shared up to 100 columns").isLessThan(12);
         // a narrow limit makes several layouts, still far fewer than without sharing
-        assertThat(narrow).isBetween(shared, separate - 1);
+        assertThat(narrow).as("layouts shared up to 6 columns").isBetween(shared, separate - 1);
     }
 
     /** @return how many node layouts the export wrote */
