@@ -451,9 +451,9 @@ Unknown keys are rejected so that a typo cannot silently select everything.
 
 ## 11. Troubleshooting
 
-A run is not limited by how many different shapes of data it has. Nodes with many different label sets, or the same property stored as a number on some nodes and as text on others, each get their own CSV layout.
-The writer keeps at most 128 files open per worker and reopens them when needed, writes one header file per layout and one headerless part file per worker, and the import is given one argument per layout
-(`--nodes=…-h3.csv,…-p3-w[0-9]+\.csv`), so the command stays short however many layouts there are (tested with 700 layouts against a real server).
+A run is not limited by how many different shapes of data it has. Rows are grouped into CSV layouts by their columns (the labels travel in a column of every row), so thousands of label sets that carry the same properties share one layout; the same property stored as a number on some nodes and as text on others adds a layout.
+The writer keeps at most 128 files open per worker, writes one header file per layout and one headerless part file per worker, and the import is given one line per layout in an arguments file (`import.args`, next to the CSV files), so the command stays short however many layouts there are.
+The job log says how many layouts were written ("Export: N node layouts and M relationship layouts")."
 
 | You see | Cause and fix |
 |---|---|

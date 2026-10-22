@@ -1,5 +1,9 @@
 package com.etolv.neo4jtool.engine.instance;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,10 +38,22 @@ public record ImportFiles(Path directory, List<String> nodeFiles, List<String> r
         if (files.maxMemory() != null && !files.maxMemory().isBlank()) {
             args.add("--max-off-heap-memory=" + files.maxMemory());
         }
-        groups(files.nodeFiles(), directoryPrefix).forEach(group -> args.add("--nodes=" + group));
-        groups(files.relationshipFiles(), directoryPrefix).forEach(group -> args.add("--relationships=" + group));
+        // The files go into an arguments file next to the CSV files: a database can have thousands of layouts, and a
+        // command line is limited to about 2 MB ("Argument list too long"). neo4j-admin reads "@file" itself.
+        List<String> lines = new ArrayList<>();
+        groups(files.nodeFiles(), directoryPrefix).forEach(group -> lines.add("--nodes=" + group));
+        groups(files.relationshipFiles(), directoryPrefix).forEach(group -> lines.add("--relationships=" + group));
+        try {
+            Files.write(files.directory().resolve(ARGUMENTS_FILE), lines.stream().map(line -> "\"" + line + "\"").toList(),
+                    StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Could not write the import arguments file: " + e.getMessage(), e);
+        }
+        args.add("@" + directoryPrefix + ARGUMENTS_FILE);
         return args;
     }
+
+    static final String ARGUMENTS_FILE = "import.args";
 
     private static final Pattern HEADER = Pattern.compile("(.*-)h(\\d+)\\.csv");
     private static final Pattern PART = Pattern.compile(".*-p\\d+-w\\d+\\.csv");
@@ -53,7 +69,7 @@ public record ImportFiles(Path directory, List<String> nodeFiles, List<String> r
         for (String file : files) {
             Matcher header = HEADER.matcher(file);
             if (header.matches()) {
-                groups.add(directoryPrefix + file + "," + directoryPrefix + header.group(1) + "p" + header.group(2) + "-w[0-9]+\\.csv");
+                groups.add(directoryPrefix + file + "," + directoryPrefix + header.group(1) + "p" + header.group(2) + "-w[0-9]+[.]csv");
             } else if (!PART.matcher(file).matches()) {
                 groups.add(directoryPrefix + file);
             }

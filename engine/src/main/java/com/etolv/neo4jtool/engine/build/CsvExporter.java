@@ -542,11 +542,11 @@ public final class CsvExporter {
             }
             String fileKey = variant.toString();
             Integer known = numbers.get(fileKey);
-            int number = known != null ? known : numbers.computeIfAbsent(fileKey, layouts::number);
+            int number = known != null ? known : layoutOf(fileKey, plan, conflicts, cells);
             try {
                 BufferedWriter writer = open.get(number);
                 if (writer == null) {
-                    writer = openFile(number, plan, conflicts, cells);
+                    writer = openFile(number);
                 }
                 List<String> header = columns.get(number);
                 for (int i = 0; i < leading.length; i++) {
@@ -581,27 +581,38 @@ public final class CsvExporter {
             }
         }
 
+        /**
+         * The layout a group of rows goes to. Layouts are told apart by their header, not by the labels: the labels are a
+         * column of every row, so groups whose rows have the same columns share one layout. A database with thousands of
+         * label sets (one per customer, say) usually has only a few hundred different headers.
+         */
+        private int layoutOf(String fileKey, GroupPlan plan, List<String> conflicts, Map<String, ValueCodec.Encoded> cells) {
+            List<String> header = new ArrayList<>(plan.plainKeys());
+            for (String key : conflicts) {
+                if (cells.containsKey(key)) {
+                    header.add(key);
+                }
+            }
+            StringBuilder line = new StringBuilder(nodes ? ":ID,:LABEL" : ":START_ID,:END_ID,:TYPE");
+            for (String key : header) {
+                ValueCodec.Encoded encoded = cells.get(key);
+                String type = conflicts.contains(key) ? encoded.type() : plan.plainType(key);
+                line.append(',').append(escape(key + ":" + type));
+            }
+            String text = line.append('\n').toString();
+            int number = layouts.number(text);
+            layouts.header(number, text);
+            columns.putIfAbsent(number, header);
+            numbers.put(fileKey, number);
+            return number;
+        }
+
         /** Opens the part of a layout: new the first time, for appending when it was closed to keep the open files few. */
-        private BufferedWriter openFile(int number, GroupPlan plan, List<String> conflicts, Map<String, ValueCodec.Encoded> cells)
-                throws IOException {
+        private BufferedWriter openFile(int number) throws IOException {
             Path file = directory.resolve(partName(filePrefix, number));
             BufferedWriter writer;
             if (created.add(number)) {
                 writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8);
-                List<String> header = new ArrayList<>(plan.plainKeys());
-                for (String key : conflicts) {
-                    if (cells.containsKey(key)) {
-                        header.add(key);
-                    }
-                }
-                columns.put(number, header);
-                StringBuilder line = new StringBuilder(nodes ? ":ID,:LABEL" : ":START_ID,:END_ID,:TYPE");
-                for (String key : header) {
-                    ValueCodec.Encoded encoded = cells.get(key);
-                    String type = conflicts.contains(key) ? encoded.type() : plan.plainType(key);
-                    line.append(',').append(escape(key + ":" + type));
-                }
-                layouts.header(number, line.append('\n').toString());
             } else {
                 writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.APPEND);
             }
