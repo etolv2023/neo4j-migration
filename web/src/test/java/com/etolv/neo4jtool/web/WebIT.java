@@ -547,6 +547,31 @@ class WebIT {
     }
 
     @Test
+    @Order(21)
+    void aSignInLastsAsLongAsTheSettingsSay() throws Exception {
+        AppSettings before = settings.get();
+        try {
+            assertThat(before.sessionHours()).isEqualTo(12);
+            var session = new org.springframework.mock.web.MockHttpSession();
+            new SessionLength(settings).sessionCreated(new jakarta.servlet.http.HttpSessionEvent(session));
+            assertThat(session.getMaxInactiveInterval()).isEqualTo(12 * 3600);
+
+            mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000", Map.of("sessionHours", "30"))
+                    .with(ADMIN).with(csrf()));
+            assertThat(settings.get().sessionHours()).isEqualTo(30);
+            var later = new org.springframework.mock.web.MockHttpSession();
+            new SessionLength(settings).sessionCreated(new jakarta.servlet.http.HttpSessionEvent(later));
+            assertThat(later.getMaxInactiveInterval()).isEqualTo(30 * 3600);
+
+            mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000", Map.of("sessionHours", "0"))
+                    .with(ADMIN).with(csrf())).andExpect(flash().attribute("error", containsString("between 1 and 720")));
+            assertThat(settings.get().sessionHours()).isEqualTo(30);
+        } finally {
+            settings.save(before);
+        }
+    }
+
+    @Test
     @Order(22)
     void linesWithoutAnOrganisationComeWithTheirParentAndWhatIsLeftOutIsListed() throws Exception {
         // A line that only belongs to a node of company 1 (no organisation of its own), and a link from company 1 to company 2.

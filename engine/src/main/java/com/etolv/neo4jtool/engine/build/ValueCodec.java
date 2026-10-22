@@ -15,8 +15,8 @@ import org.neo4j.driver.types.Point;
  * fingerprint it. Everything that the import cannot carry exactly is reported as {@code null} from
  * {@link #encode}: the split then writes it in a second pass, straight from the source value.
  *
- * <p>What the import cannot carry (found by trying it against Neo4j 5.26): empty lists (an empty cell means "no
- * property"), date-times with a named time zone (only offsets are parsed), and property names that contain ':' or
+ * <p>What the import cannot carry (found by trying it against Neo4j 5.26): empty lists and lists with an empty text in them
+ * (an empty cell means "no property"), date-times with a named time zone (only offsets are parsed), and property names that contain ':' or
  * parentheses (they are part of the header syntax).
  */
 final class ValueCodec {
@@ -103,6 +103,10 @@ final class ValueCodec {
                 return null;
             }
             if (item.cell().indexOf(ARRAY_DELIMITER) >= 0) {
+                return null;
+            }
+            if (item.cell().isEmpty()) {
+                // an empty text inside a list is an empty piece of the cell, which the import drops or reads as no value
                 return null;
             }
             if (elementType == null) {

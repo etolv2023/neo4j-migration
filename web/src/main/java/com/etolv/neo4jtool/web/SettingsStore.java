@@ -48,7 +48,8 @@ public class SettingsStore {
                 Integer.parseInt(rows.getOrDefault("id_set_memory_mb", String.valueOf(d.idSetMemoryMb()))),
                 Integer.parseInt(rows.getOrDefault("max_jobs", String.valueOf(d.maxJobs()))),
                 Boolean.parseBoolean(rows.getOrDefault("split_as_directory", String.valueOf(d.splitAsDirectory()))),
-                Boolean.parseBoolean(rows.getOrDefault("require_two_factor", String.valueOf(d.requireTwoFactor()))));
+                Boolean.parseBoolean(rows.getOrDefault("require_two_factor", String.valueOf(d.requireTwoFactor()))),
+                Integer.parseInt(rows.getOrDefault("session_hours", String.valueOf(d.sessionHours()))));
     }
 
     /** @throws IllegalArgumentException when a value cannot work */
@@ -82,6 +83,7 @@ public class SettingsStore {
         put("max_jobs", String.valueOf(s.maxJobs()));
         put("split_as_directory", String.valueOf(s.splitAsDirectory()));
         put("require_two_factor", String.valueOf(s.requireTwoFactor()));
+        put("session_hours", String.valueOf(s.sessionHours()));
     }
 
     private static void validate(AppSettings s) {
@@ -111,6 +113,9 @@ public class SettingsStore {
         }
         if (s.importThreads() < 0 || s.importThreads() > 1024) {
             throw new IllegalArgumentException("Import threads must be between 0 and 1024");
+        }
+        if (s.sessionHours() < 1 || s.sessionHours() > 720) {
+            throw new IllegalArgumentException("A sign-in must last between 1 and 720 hours");
         }
         if (s.idSetMemoryMb() < 16) {
             throw new IllegalArgumentException("Memory for the selected ids must be at least 16 MB");

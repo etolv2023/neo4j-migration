@@ -35,9 +35,7 @@ public record ImportFiles(Path directory, List<String> nodeFiles, List<String> r
         if (files.threads() > 0) {
             args.add("--threads=" + files.threads());
         }
-        if (files.maxMemory() != null && !files.maxMemory().isBlank()) {
-            args.add("--max-off-heap-memory=" + files.maxMemory());
-        }
+        args.add("--max-off-heap-memory=" + offHeap(files, ImportResources.detect()));
         // The files go into an arguments file next to the CSV files: a database can have thousands of layouts, and a
         // command line is limited to about 2 MB ("Argument list too long"). neo4j-admin reads "@file" itself.
         List<String> lines = new ArrayList<>();
@@ -54,6 +52,11 @@ public record ImportFiles(Path directory, List<String> nodeFiles, List<String> r
     }
 
     static final String ARGUMENTS_FILE = "import.args";
+
+    /** The off-heap memory of the import: what the settings say, or what fits this machine. */
+    static String offHeap(ImportFiles files, ImportResources.Plan automatic) {
+        return files.maxMemory() != null && !files.maxMemory().isBlank() ? files.maxMemory() : automatic.offHeap();
+    }
 
     private static final Pattern HEADER = Pattern.compile("(.*-)h(\\d+)\\.csv");
     private static final Pattern PART = Pattern.compile(".*-p\\d+-w\\d+\\.csv");

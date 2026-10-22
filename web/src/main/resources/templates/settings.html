@@ -58,7 +58,7 @@
                 <p class="hint">Threads that read the source and write the CSV files at the same time.</p></div>
             <div><label for="importThreads">Import threads</label><input id="importThreads" name="importThreads" type="number" min="0" th:value="${settings.importThreads()}">
                 <p class="hint">0 = one per core.</p></div>
-            <div><label for="importMemory">Import memory</label><input id="importMemory" name="importMemory" type="text" th:value="${settings.importMemory()}" placeholder="(neo4j-admin decides)">
+            <div><label for="importMemory">Import memory</label><input id="importMemory" name="importMemory" type="text" th:value="${settings.importMemory()}" placeholder="(automatic: sized from this server's memory)">
                 <p class="hint">For example 24g. Leave room for the operating system.</p></div>
         </div>
         <div class="row">
@@ -81,6 +81,10 @@
         <p class="hint">Switch it off to make a dry run faster when you only care about nodes.</p>
         <label class="check"><input type="checkbox" name="requireTwoFactor" value="true" th:checked="${settings.requireTwoFactor()}"> Require two-factor sign-in for every user</label>
         <p class="hint">A user who has not set it up yet is asked to after the password. Turn on your own two-factor sign-in first.</p>
+        <div class="row">
+            <div><label for="sessionHours">Stay signed in for (hours)</label><input id="sessionHours" name="sessionHours" type="number" min="1" max="720" th:value="${settings.sessionHours()}"></div>
+        </div>
+        <p class="hint">How long you can leave the dashboard alone before you have to sign in again. It counts from your last click, and applies to the next sign-in.</p>
         <p><button type="submit">Save settings</button></p>
     </form>
 

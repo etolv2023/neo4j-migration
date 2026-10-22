@@ -116,7 +116,7 @@ holds the new database.
 
 How it works: read the selected ids → export typed CSV (one file per label set and per combination of conflicting property
 types) → `neo4j-admin database import full --id-type=actual --bad-tolerance=0` → throw-away server to write what the import
-cannot carry (empty lists, dates with a named zone) and to create indexes and constraints → read the new database back and
+cannot carry (empty lists, lists with an empty text in them, dates with a named zone) and to create indexes and constraints → read the new database back and
 compare ids, counts and a 64-bit fingerprint over every node and relationship → graceful stop → optional
 `neo4j-admin database check` → dump → move to the output directory → remove all temporary files and containers.
 

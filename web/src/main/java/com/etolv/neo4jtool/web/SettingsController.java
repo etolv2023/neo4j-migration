@@ -54,7 +54,8 @@ public class SettingsController {
                 @RequestParam(defaultValue = "") String importMemory, @RequestParam(defaultValue = "512") int idSetMemoryMb,
                 @RequestParam(defaultValue = "2") int maxJobs,
                 @RequestParam(defaultValue = "false") boolean splitAsDirectory,
-                @RequestParam(defaultValue = "false") boolean requireTwoFactor, Authentication auth, RedirectAttributes redirect) {
+                @RequestParam(defaultValue = "false") boolean requireTwoFactor,
+                @RequestParam(defaultValue = "12") int sessionHours, Authentication auth, RedirectAttributes redirect) {
         if (requireTwoFactor && !settings.get().requireTwoFactor() && !users.hasTwoFactor(auth.getName())) {
             redirect.addFlashAttribute("error", "Turn on two-factor sign-in for your own account first, so you do not lock yourself out");
             return "redirect:/settings";
@@ -64,7 +65,7 @@ public class SettingsController {
                     checkAfterBuild, tempHeap.strip(),
                     tempPageCache.strip(), startTimeoutMinutes, orgProperty.strip(), includeNeighbours, batchSize, sampleSize, analyseRelationships,
                     fastReader, readerLib.strip(), readerHeap.strip(), readerPageCache.strip(), workers, importThreads,
-                    importMemory.strip(), idSetMemoryMb, maxJobs, splitAsDirectory, requireTwoFactor));
+                    importMemory.strip(), idSetMemoryMb, maxJobs, splitAsDirectory, requireTwoFactor, sessionHours));
             audit.record("settings_save", null);
             redirect.addFlashAttribute("message", "Settings saved");
         } catch (IllegalArgumentException e) {

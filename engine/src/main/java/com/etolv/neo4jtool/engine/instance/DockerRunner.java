@@ -70,7 +70,11 @@ public final class DockerRunner implements InstanceRunner {
 
     @Override
     public void importDatabase(Path dataDirectory, String database, ImportFiles files, Consumer<String> log) {
+        ImportResources.Plan memory = ImportResources.detect();
+        log.accept(memory.describe() + (files.maxMemory() != null && !files.maxMemory().isBlank()
+                ? "; off-heap is set to " + files.maxMemory() + " in Settings" : ""));
         List<String> command = new ArrayList<>(List.of("docker", "run", "--rm", "--entrypoint", "neo4j-admin",
+                "-e", "HEAP_SIZE=" + memory.heap(),
                 "-v", dataDirectory.toAbsolutePath() + ":/data", "-v", files.directory().toAbsolutePath() + ":/import:ro",
                 settings.dockerImage()));
         command.addAll(ImportFiles.arguments(database, "/import/", "/tmp/import.report", files));

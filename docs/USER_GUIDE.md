@@ -251,7 +251,7 @@ A split needs a finished dry run that is not BLOCKED. Press **Run the split** on
 2. exports the selected nodes and the relationships *between* them as CSV files, with exact value types (numbers, text,
    dates, durations, points, lists, bytes);
 3. builds a new database with `neo4j-admin database import full --id-type=actual`, so **node ids are the same**;
-4. starts a throw-away server on it to write what the import cannot carry (empty lists and dates with a named time zone),
+4. starts a throw-away server on it to write what the import cannot carry (empty lists, lists with an empty text in them, and dates with a named time zone),
    and to create the same indexes and constraints as the source;
 5. reads the new database back and compares it with the export: the set of ids, the counts, and a hash over every node
    (id, labels, properties with their types) and every relationship (ends, type, properties). Any difference fails the run;
@@ -338,7 +338,7 @@ Things to know:
 | Fast reader | on by default; reads a dump (after loading it into a folder) or a stopped data directory with the Neo4j kernel on all threads, about 5 to 10 times faster than through a temporary server. Falls back by itself, and says why in the job log. A running server is always read over Bolt. |
 | Fast reader jars / heap / page cache | where `reader/target/lib` is (empty = next to the application); memory of the reader process. The more of the store the page cache holds, the faster the scan. |
 | Reading threads | threads that read the source and write CSV at once (default: the number of cores) |
-| Import threads / memory | `neo4j-admin import` settings; 0 and empty let it decide |
+| Import threads / memory | `neo4j-admin import` settings. Threads: 0 = one per core. Memory: empty = sized from this server: a heap of an eighth of the machine (1 to 8 GB), a quarter of the machine (at least 3 GB) kept for the system and the dashboard, and the rest as off-heap memory, never more than the system reports as available; the job log shows the numbers it used. Type a value such as `8g` to set the off-heap memory yourself. |
 | Memory for the selected ids | past this many MB the ids go to a file on disk (default 512) |
 | Migrations at the same time | default 2; each one needs its own disk space and memory |
 | Organisation property | default for new migrations |
@@ -346,6 +346,7 @@ Things to know:
 | Ids per query | batch size of the dry run (min 100; default 10,000) |
 | Examples per section | how many example rows the report keeps |
 | Check relationships | switch off to make the dry run faster |
+| Stay signed in for (hours) | how long you can leave the dashboard alone before signing in again (default 12, 1 to 720); counts from your last click and applies to the next sign-in |
 | Require two-factor sign-in for every user | off by default; when on, a user who has not set it up is sent to do so right after the password. You can only turn it on once your own account has two-factor. |
 
 The speed settings change how fast the work goes, never what comes out: the tests compare the files, counts and fingerprints for

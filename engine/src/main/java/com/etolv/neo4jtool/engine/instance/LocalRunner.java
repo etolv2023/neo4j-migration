@@ -94,7 +94,12 @@ public final class LocalRunner implements InstanceRunner {
             List<String> command = new ArrayList<>(List.of(admin()));
             command.addAll(ImportFiles.arguments(database, files.directory().toAbsolutePath() + "/",
                     workspace.root().resolve("import.report").toString(), files));
-            Commands.run(command, environment(conf), null, log);
+            ImportResources.Plan memory = ImportResources.detect();
+            log.accept(memory.describe() + (files.maxMemory() != null && !files.maxMemory().isBlank()
+                    ? "; off-heap is set to " + files.maxMemory() + " in Settings" : ""));
+            Map<String, String> environment = new java.util.HashMap<>(environment(conf));
+            environment.put("HEAP_SIZE", memory.heap());
+            Commands.run(command, environment, null, log);
         } finally {
             workspace.delete(root -> { });
         }
