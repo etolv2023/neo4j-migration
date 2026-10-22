@@ -78,7 +78,7 @@ class ImportWatchTest {
         assertThat(sawPreparing).isTrue();
         assertThat(watch.preparingSeconds()).isEqualTo(-1);   // over: it read rows
         assertThat(watch.preparedSeconds()).isGreaterThanOrEqualTo(0);
-        assertThat(watch.finished()).extracting(ImportWatch.Done::name).containsExactly("Node import", "Relationship import");
+        assertThat(watch.finished()).extracting(ImportWatch.Done::name).containsExactly("Node import", "Relationship import", "Relationship linking");
     }
 
     @Test
