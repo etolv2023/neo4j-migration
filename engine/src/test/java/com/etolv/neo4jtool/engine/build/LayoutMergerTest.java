@@ -293,4 +293,48 @@ class LayoutMergerTest {
             ownTypes.get(i).forEach((key, type) -> assertThat(shape.types()).containsEntry(key, type));
         }
     }
+
+    @Test
+    void aWholeCompanyOfThousandsOfLabelSetsAndTensOfThousandsOfCombinationsIsMergedQuickly() {
+        List<GroupPlan> groups = new ArrayList<>();
+        for (int i = 0; i < 5000; i++) {
+            groups.add(plan(1 + i % 11, "id:long", "name:string", "p" + (i % 70) + ":string", "q" + ((i * 7) % 90) + ":long",
+                    "r" + ((i * 13) % 150) + ":boolean"));
+        }
+        // 300 label sets in which five properties have two or three types each: up to a few hundred combinations each
+        String[] types = {"long", "string", "double"};
+        for (int g = 0; g < 300; g++) {
+            GroupPlan group = plan(1000, "id:long", "name:string", "c0:long", "c0:string", "c1:long", "c1:string", "c1:double",
+                    "c2:long", "c2:string", "c3:string", "c3:double", "c4:long", "c4:string", "own" + (g % 50) + ":long");
+            List<String> combinations = new ArrayList<>();
+            for (int a = 0; a < 3; a++) {
+                for (int b = 0; b < 4; b++) {
+                    for (int c = 0; c < 3; c++) {
+                        for (int d = 0; d < 3; d++) {
+                            for (int e = 0; e < 3; e++) {
+                                List<String> pairs = new ArrayList<>();
+                                if (a < 2) pairs.add("c0=" + types[a]);
+                                if (b < 3) pairs.add("c1=" + types[b]);
+                                if (c < 2) pairs.add("c2=" + types[c]);
+                                if (d < 2) pairs.add("c3=" + (d == 0 ? "string" : "double"));
+                                if (e < 2) pairs.add("c4=" + types[e]);
+                                combinations.add(String.join(",", pairs));
+                            }
+                        }
+                    }
+                }
+            }
+            variants(group, 3, combinations.stream().distinct().toArray(String[]::new));
+            groups.add(group);
+        }
+
+        long start = System.nanoTime();
+        LayoutMerger.Result result = LayoutMerger.merge(groups, 100);
+        long millis = (System.nanoTime() - start) / 1_000_000;
+
+        assertThat(result.items()).isGreaterThan(30_000);
+        assertThat(result.layouts()).isLessThan(200);
+        assertThat(millis).as("merge time in ms for %s items", result.items()).isLessThan(20_000);
+        System.out.println("MERGE-SCALE " + result.describe() + " in " + millis + " ms");
+    }
 }
