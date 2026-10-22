@@ -11,7 +11,7 @@
         <a class="btn secondary" th:if="${report != null}" th:href="@{/dry-runs/{id}/report.json(id=${row.id()})}">Download JSON</a>
     </div>
 
-    <div class="flash err" th:if="${row.status().name() == 'FAILED'}"><b>This dry run failed.</b> <span th:text="${row.error()}"></span></div>
+    <th:block th:if="${failure != null}"><th:block th:replace="~{failure :: card(${failure}, 'dry-run-failure')}"></th:block></th:block>
 
     <th:block th:if="${report != null}">
         <div th:class="${'banner ' + report.gate().name()}">

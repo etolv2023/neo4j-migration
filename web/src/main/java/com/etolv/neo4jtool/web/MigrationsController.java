@@ -97,6 +97,8 @@ public class MigrationsController {
         model.addAttribute("logAfter", log.isEmpty() ? 0 : log.getLast().id());
         model.addAttribute("liveMigration", id);
         model.addAttribute("liveBusy", migration.state().busy());
+        model.addAttribute("failure", migration.lastError() == null ? null
+                : Failure.explain(migration.lastError(), Failure.Stage.of(jobLog.messageAt(runStart)), jobLog.lastStep(migration.scope(), runStart)));
         model.addAttribute("dryRun", migration.dryRunId() == null ? null : reports.find(migration.dryRunId()).orElse(null));
         model.addAttribute("result", migration.runJson() == null || !migration.isSplit() ? null
                 : Json.read(migration.runJson(), SplitResult.class));
@@ -153,6 +155,17 @@ public class MigrationsController {
         model.addAttribute("row", row);
         if (row.status() == ReportStore.Status.DONE) {
             model.addAttribute("report", reports.reportJson(id).map(j -> Json.read(j, DryRunReport.class)).orElse(null));
+        } else if (row.status() == ReportStore.Status.FAILED) {
+            // the step is known only while the migration's latest run is this dry run
+            String step = null;
+            if (row.migrationId() != null) {
+                String scope = "migration:" + row.migrationId();
+                long start = jobLog.lastRunStart(scope);
+                if ("Dry run started".equals(jobLog.messageAt(start))) {
+                    step = jobLog.lastStep(scope, start);
+                }
+            }
+            model.addAttribute("failure", Failure.explain(row.error(), Failure.Stage.DRY_RUN, step));
         }
         return "dry-run";
     }

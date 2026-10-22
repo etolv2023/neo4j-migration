@@ -344,7 +344,7 @@ public class MigrationJobs {
             audit.record("system", "dry_run_done", "#" + migration.id() + " " + report.gate());
         } catch (Throwable e) {
             if (reportId > 0) {
-                reports.fail(reportId, message(e));
+                reports.fail(reportId, Failure.describe(e));
             }
             fail(migration, Migration.State.PLANNED, "Dry run", e);
         } finally {
@@ -453,7 +453,7 @@ public class MigrationJobs {
 
     private void fail(Migration migration, Migration.State backTo, String what, Throwable e) {
         log.warn("{} of migration {} failed", what, migration.id(), e);
-        String message = message(e);
+        String message = Failure.describe(e);
         JobTimeline timeline = timelines.get(migration.id());
         if (timeline != null) {
             timeline.end();
@@ -461,6 +461,10 @@ public class MigrationJobs {
         }
         migrations.failed(migration.id(), backTo, message);
         jobLog.add(migration.scope(), "ERROR", what + " failed: " + message);
+        // what it means, in the log too, so that a copy of the log is enough to understand it
+        long runStart = jobLog.lastRunStart(migration.scope());
+        Failure failure = Failure.explain(message, Failure.Stage.of(jobLog.messageAt(runStart)), jobLog.lastStep(migration.scope(), runStart));
+        jobLog.add(migration.scope(), "ERROR", failure.title() + ". " + failure.what() + " What to do: " + failure.todo());
         audit.record("system", what.toLowerCase().replace(' ', '_') + "_failed", "#" + migration.id());
     }
 

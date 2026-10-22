@@ -291,9 +291,14 @@ class WebIT {
 
         assertThat(after.lastError()).isNotBlank();
         mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(status().isOk())
-                .andExpect(content().string(containsString("The last step failed")));
+                .andExpect(content().string(containsString("Stopped at")))
+                .andExpect(content().string(containsString("Technical details")))
+                .andExpect(content().string(containsString("Nothing was changed")));
         assertThat(jdbc.sql("SELECT level FROM job_logs WHERE scope = ?").param("migration:" + id).query(String.class).list())
                 .contains("ERROR");
+        // the explanation is in the log too, after the original text
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM job_logs WHERE scope = ? AND level = 'ERROR' AND message LIKE '%What to do:%'")
+                .param("migration:" + id).query(Long.class).single()).isEqualTo(1L);
     }
 
     @Test

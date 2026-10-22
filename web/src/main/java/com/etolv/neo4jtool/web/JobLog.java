@@ -57,6 +57,17 @@ public class JobLog {
                 .param(scope).query(Long.class).single();
     }
 
+    /** The message of one line, or null when it is gone. */
+    public String messageAt(long id) {
+        return jdbc.sql("SELECT message FROM job_logs WHERE id = ?").param(id).query(String.class).optional().orElse(null);
+    }
+
+    /** The last step the run that began at {@code fromId} reported, or null when it stopped before the first one. */
+    public String lastStep(String scope, long fromId) {
+        return jdbc.sql("SELECT message FROM job_logs WHERE scope = ? AND id >= ? AND level = 'STEP' ORDER BY id DESC LIMIT 1")
+                .params(scope, fromId).query(String.class).optional().orElse(null);
+    }
+
     /** The last {@code limit} lines from the line with id {@code fromId} on, oldest first. */
     public List<Line> from(String scope, long fromId, int limit) {
         List<Line> latest = jdbc.sql("SELECT * FROM job_logs WHERE scope = ? AND id >= ? ORDER BY id DESC LIMIT ?")

@@ -22,9 +22,7 @@
 
     <!-- filled and kept up to date by live.js -->
     <div class="card progress-card" id="job-progress" hidden></div>
-    <div class="flash err" th:if="${migration.lastError() != null}">
-        <b>The last step failed.</b> <span th:text="${migration.lastError()}"></span>
-    </div>
+    <th:block th:if="${failure != null}"><th:block th:replace="~{failure :: card(${failure}, 'migration-failure')}"></th:block></th:block>
 
     <details class="card selection">
         <summary><h2>Selection</h2></summary>
