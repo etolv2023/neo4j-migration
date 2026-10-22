@@ -38,6 +38,7 @@ class MergedLayoutsIT {
     private static final String IMAGE = System.getProperty("neo4j.image", "neo4j:5.26.29-community");
     private static final int LABEL_SETS = Integer.getInteger("layouts.labelSets", 240);
     private static final int KEYS = 30;
+    private static final int CONFLICTED_SETS = 40;
 
     private Neo4jFixture source;
     private Path root;
@@ -74,10 +75,40 @@ class MergedLayoutsIT {
         source.run("CREATE (:Special {org_id: 1, s: '', t: 'x'}) CREATE (:Special {org_id: 1, t: 'y'}) CREATE (:Special {org_id: 1}) "
                 + "CREATE (:Lists {org_id: 1, tags: ['a', 'b'], flag: true}) CREATE (:Lists {org_id: 1, flag: false}) CREATE (:Lists {org_id: 1, tags: []}) "
                 + "CREATE (:Bare {org_id: 1})");
+        // label sets in which two properties each have three types, on different nodes of the same label set: the combinations
+        // (and nodes with one of them, or none) are written to layouts of their own unless the combinations share layouts too
+        StringBuilder conflicts = new StringBuilder();
+        for (int i = 1; i <= CONFLICTED_SETS; i++) {
+            for (int n = 0; n < 11; n++) {
+                conflicts.append("CREATE (:Clash:C").append(i).append(" {org_id: 1, name: 'c").append(i).append('_').append(n).append("'");
+                if (n < 9) {
+                    conflicts.append(", p0: ").append(conflictValue(i, n, n % 3)).append(", p1: ").append(conflictValue(i, n, (n / 3) % 3));
+                } else if (n == 9) {
+                    conflicts.append(", p0: ").append(conflictValue(i, n, i % 3));
+                }
+                if (i % 2 == 0) {
+                    conflicts.append(", own").append(i % 5).append(": ").append(i * 7 + n);
+                }
+                conflicts.append("}) ");
+            }
+            if (i % 10 == 0) {
+                source.run(conflicts.toString());
+                conflicts.setLength(0);
+            }
+        }
         // one property with several types inside a label set
         source.run("CREATE (:Mixed {org_id: 1, v: 1}) CREATE (:Mixed {org_id: 1, v: 'one'}) CREATE (:Mixed {org_id: 1, v: 1.5}) CREATE (:Mixed {org_id: 1})");
         source.run("MATCH (a:L1), (b:L2), (c:Special {t: 'x'}), (d:Special {t: 'y'}) CREATE (a)-[:NEXT {rank: 1}]->(b) CREATE (b)-[:NEXT {rank: 'two'}]->(c) "
                 + "CREATE (c)-[:NEXT]->(d)");
+    }
+
+    /** A number, a text or a decimal, by {@code kind} 0, 1, 2. */
+    private static String conflictValue(int set, int node, int kind) {
+        return switch (kind) {
+            case 0 -> String.valueOf(set * 100 + node);
+            case 1 -> "'s" + set + "_" + node + "'";
+            default -> (set + node) + ".5";
+        };
     }
 
     @AfterAll
@@ -93,10 +124,10 @@ class MergedLayoutsIT {
         int shared = split("shared", BuildOptions.DEFAULT_LAYOUT_COLUMNS);
         int narrow = split("narrow", 6);
 
-        // without sharing every label set that differs in its properties is a layout of its own
-        assertThat(separate).as("layouts without sharing").isGreaterThan(LABEL_SETS / 2);
-        // with sharing: the layouts of the two types of 'v', and of the label set with several types, and a few more
-        assertThat(shared).as("layouts shared up to 100 columns").isLessThan(12);
+        // without sharing every label set that differs in its properties is a layout of its own, and every combination of types
+        assertThat(separate).as("layouts without sharing").isGreaterThan(LABEL_SETS / 2 + CONFLICTED_SETS * 4);
+        // with sharing: p0 and p1 are a number, a text or a decimal in a layout (9 layouts), the two types of 'v', and a few more
+        assertThat(shared).as("layouts shared up to 100 columns").isLessThan(30);
         // a narrow limit makes several layouts, still far fewer than without sharing
         assertThat(narrow).as("layouts shared up to 6 columns").isBetween(shared, separate - 1);
     }

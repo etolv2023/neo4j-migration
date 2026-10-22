@@ -261,10 +261,13 @@ public final class CsvExporter {
             plans.merge(part.result());
         }
         plans.freeze();
+        if (layoutColumns > 0) {
+            collectVariants();
+        }
         LayoutMerger.Result merged = LayoutMerger.merge(plans.nodePlans.values(), layoutColumns);
         progress.phase(layoutColumns > 0
                 ? "Export: sharing node layouts (at most " + layoutColumns + " columns): " + merged.describe()
-                : "Export: node layouts are not shared (the setting is off): " + merged.groups() + " groups of nodes");
+                : "Export: node layouts are not shared (the setting is off): " + plans.nodePlans.size() + " groups of nodes");
 
         progress.phase("Export, pass 2 of 2: writing the CSV files");
         List<Scanner.Part<Pass2>> written = scanner.run(Pass2::new);
@@ -292,6 +295,105 @@ public final class CsvExporter {
         progress.phase("Export: " + nodeLayouts.count() + " node layouts and " + relationshipLayouts.count()
                 + " relationship layouts written by " + written.size() + " workers");
         return new Export(nodeFiles, relationshipFiles, nodes, relationships, nodeHash, relationshipHash, Fixups.of(fixupParts), outside);
+    }
+
+    // ---- pass 1b: the combinations of conflicting types ----
+
+    /** How many nodes of one group have one combination of types of its conflicting properties. */
+    private static final class Counted {
+        private final Map<String, String> types;
+        private long rows;
+
+        Counted(Map<String, String> types) {
+            this.types = types;
+        }
+    }
+
+    /** What one worker found in pass 1b, per group of nodes. */
+    private static final class VariantCounts {
+        private final Map<String, Map<String, Counted>> byGroup = new HashMap<>();
+        private final java.util.Set<String> overflowed = new java.util.HashSet<>();
+    }
+
+    /**
+     * A group whose property has several types is written to one layout per combination of types. To let those
+     * combinations share layouts too, they must be known before the first row is written: this reads the nodes once more,
+     * only the groups with conflicts, and counts the combinations. Without it each combination keeps a layout of its own.
+     */
+    private void collectVariants() {
+        long conflicting = plans.nodePlans.values().stream().filter(plan -> !plan.conflictKeys().isEmpty()).count();
+        if (conflicting == 0) {
+            progress.phase("Export, pass 1b of 2: no group of nodes has conflicting property types, nothing to look at");
+            return;
+        }
+        progress.phase("Export, pass 1b of 2: finding out which combinations of conflicting property types occur in "
+                + conflicting + " groups of nodes");
+        Scanner nodesOnly = new Scanner(source, ids, List.of(), batchSize, workers, progress);
+        List<Scanner.Part<VariantCounts>> parts = nodesOnly.run(worker -> new Scanner.Sink<VariantCounts>() {
+            private final VariantCounts local = new VariantCounts();
+
+            @Override
+            public void accept(long id, List<String> labels, Map<String, Value> props) {
+                String group = labelKey(labels);
+                GroupPlan plan = plans.nodePlans.get(group);
+                if (plan == null) {
+                    throw new BuildException("The source changed while it was being exported: nodes with labels ["
+                            + group.replace('\u0000', ',') + "] appeared that were not there when it was read. Run the split again.");
+                }
+                List<String> conflicts = plan.conflictKeys();
+                if (conflicts.isEmpty() || local.overflowed.contains(group)) {
+                    return;
+                }
+                Map<String, String> types = new TreeMap<>();
+                for (String key : conflicts) {
+                    Value value = props.get(key);
+                    if (value != null) {
+                        ValueCodec.Encoded encoded = encodeNodeProperty(id, key, value);
+                        if (encoded != null) {
+                            types.put(key, encoded.type());
+                        }
+                    }
+                }
+                Map<String, Counted> variants = local.byGroup.computeIfAbsent(group, k -> new HashMap<>());
+                Counted counted = variants.computeIfAbsent(GroupPlan.variantKey(types), k -> new Counted(types));
+                counted.rows++;
+                if (variants.size() > GroupPlan.MAX_VARIANTS) {
+                    variants.clear();
+                    local.overflowed.add(group);
+                }
+            }
+
+            @Override
+            public void accept(long start, long end, String type, long relationshipId, Map<String, Value> props) {
+                throw new IllegalStateException("Relationships are not read in pass 1b");
+            }
+
+            @Override
+            public VariantCounts finish() {
+                return local;
+            }
+        });
+        for (Scanner.Part<VariantCounts> part : parts) {
+            VariantCounts counts = part.result();
+            counts.byGroup.forEach((group, variants) -> variants.values()
+                    .forEach(counted -> plans.nodePlans.get(group).addVariant(counted.types, counted.rows)));
+            counts.overflowed.forEach(group -> plans.nodePlans.get(group).overflowVariants());
+        }
+        long overflowed = 0;
+        long variants = 0;
+        for (GroupPlan plan : plans.nodePlans.values()) {
+            if (!plan.conflictKeys().isEmpty()) {
+                plan.variantsDone();
+                if (plan.variantsComplete()) {
+                    variants += plan.variants().size();
+                } else {
+                    overflowed++;
+                }
+            }
+        }
+        progress.phase("Export, pass 1b of 2: found " + variants + " combinations of property types in " + (conflicting - overflowed)
+                + " groups" + (overflowed > 0 ? "; " + overflowed + " groups have more than " + GroupPlan.MAX_VARIANTS
+                + " combinations and keep a layout per combination" : ""));
     }
 
     // ---- pass 1 ----
@@ -549,16 +651,33 @@ public final class CsvExporter {
         }
 
         void write(String groupKey, GroupPlan plan, Map<String, ValueCodec.Encoded> cells, Object... leading) {
-            // Properties with one type are shared columns; a property with several types picks the file by its type.
-            StringBuilder variant = new StringBuilder(groupKey).append('\u0001');
+            // A group that shares a layout writes to it. Otherwise properties with one type are shared columns of the
+            // group's own layouts and a property with several types picks the file by its type.
             List<String> conflicts = plan.conflictKeys();
-            for (String key : conflicts) {
-                ValueCodec.Encoded encoded = cells.get(key);
-                variant.append(key).append('=').append(encoded == null ? "-" : encoded.type()).append('\u0001');
+            GroupPlan.Shape shape = null;
+            if (nodes) {
+                Map<String, String> conflictTypes = new TreeMap<>();
+                for (String key : conflicts) {
+                    ValueCodec.Encoded encoded = cells.get(key);
+                    if (encoded != null) {
+                        conflictTypes.put(key, encoded.type());
+                    }
+                }
+                shape = plan.sharedShape(conflictTypes);
             }
-            String fileKey = variant.toString();
+            String fileKey;
+            if (shape != null) {
+                fileKey = "shared\u0001" + shape.id();
+            } else {
+                StringBuilder variant = new StringBuilder(groupKey).append('\u0001');
+                for (String key : conflicts) {
+                    ValueCodec.Encoded encoded = cells.get(key);
+                    variant.append(key).append('=').append(encoded == null ? "-" : encoded.type()).append('\u0001');
+                }
+                fileKey = variant.toString();
+            }
             Integer known = numbers.get(fileKey);
-            int number = known != null ? known : layoutOf(fileKey, plan, conflicts, cells);
+            int number = known != null ? known : layoutOf(fileKey, plan, shape, conflicts, cells);
             try {
                 BufferedWriter writer = open.get(number);
                 if (writer == null) {
@@ -577,10 +696,9 @@ public final class CsvExporter {
                     ValueCodec.Encoded encoded = cells.get(key);
                     if (encoded != null) {
                         present++;
-                        String expected = conflicts.contains(key) ? encoded.type() : plan.plainType(key);
-                        if (!expected.equals(encoded.type()) || !plan.knows(key, encoded.type())) {
+                        if (!plan.knows(key, encoded.type())) {
                             throw new BuildException("The source changed while it was being exported: property '" + key
-                                    + "' now has type " + encoded.type() + " where " + expected + " was planned. Run the split again.");
+                                    + "' now has type " + encoded.type() + ", which it did not have when it was read. Run the split again.");
                         }
                         writer.write(escape(encoded.cell()));
                     }
@@ -602,17 +720,23 @@ public final class CsvExporter {
          * column of every row, so groups whose rows have the same columns share one layout. A database with thousands of
          * label sets (one per customer, say) usually has only a few hundred different headers.
          */
-        private int layoutOf(String fileKey, GroupPlan plan, List<String> conflicts, Map<String, ValueCodec.Encoded> cells) {
-            List<String> header = new ArrayList<>(plan.plainKeys());
-            for (String key : conflicts) {
-                if (cells.containsKey(key)) {
-                    header.add(key);
+        private int layoutOf(String fileKey, GroupPlan plan, GroupPlan.Shape shape, List<String> conflicts,
+                             Map<String, ValueCodec.Encoded> cells) {
+            List<String> header;
+            if (shape != null) {
+                header = shape.keys();
+            } else {
+                header = new ArrayList<>(plan.plainKeys());
+                for (String key : conflicts) {
+                    if (cells.containsKey(key)) {
+                        header.add(key);
+                    }
                 }
             }
             StringBuilder line = new StringBuilder(nodes ? ":ID,:LABEL" : ":START_ID,:END_ID,:TYPE");
             for (String key : header) {
-                ValueCodec.Encoded encoded = cells.get(key);
-                String type = conflicts.contains(key) ? encoded.type() : plan.plainType(key);
+                String type = shape != null ? shape.types().get(key)
+                        : conflicts.contains(key) ? cells.get(key).type() : plan.plainType(key);
                 line.append(',').append(escape(key + ":" + type));
             }
             String text = line.append('\n').toString();
