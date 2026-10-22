@@ -178,7 +178,8 @@ public class MigrationJobs {
     /** How a build is done, by the settings: threads, import tuning, and the fast reader that checks the new database. */
     private BuildOptions buildOptions(AppSettings current) {
         return new BuildOptions(current.batchSize(), current.copySchema(), current.checkAfterBuild(), current.workers(),
-                current.importThreads(), current.importMemory(), endpointService.fastReaders());
+                current.importThreads(), current.importMemory(), endpointService.fastReaders())
+                .withLayoutColumns(current.layoutColumns());
     }
 
     public void startPlan(Migration migration) {

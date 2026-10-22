@@ -184,15 +184,15 @@ public final class MergeService {
         phases.start("Exporting the target to CSV");
         List<CsvExporter.Rule> targetRules = List.of(CsvExporter.Rule.out(targetIds));
         CsvExporter.Export targetExport = targetFast != null
-                ? targetFast.export(targetIds, targetRules, "target-", csv, build.batchSize(), build.workers(), progress)
+                ? targetFast.export(targetIds, targetRules, "target-", csv, build.batchSize(), build.workers(), build.layoutColumns(), progress)
                 : new CsvExporter(CsvExporter.bolt(target), targetIds, targetRules, "target-", csv, build.batchSize(),
-                        build.workers(), progress).export();
+                        build.workers(), build.layoutColumns(), progress).export();
         phases.start("Exporting the nodes to restore to CSV");
         List<CsvExporter.Rule> restoredRules = List.of(CsvExporter.Rule.out(allowedEnds), CsvExporter.Rule.in(confirmed));
         CsvExporter.Export restoredExport = sourceFast != null
-                ? sourceFast.export(missing, restoredRules, "restored-", csv, build.batchSize(), build.workers(), progress)
+                ? sourceFast.export(missing, restoredRules, "restored-", csv, build.batchSize(), build.workers(), build.layoutColumns(), progress)
                 : new CsvExporter(CsvExporter.bolt(source), missing, restoredRules, "restored-", csv, build.batchSize(),
-                        build.workers(), progress).export();
+                        build.workers(), build.layoutColumns(), progress).export();
         log.accept(restoredExport.nodes() + " nodes and " + restoredExport.relationships() + " relationships restored; "
                 + restoredExport.relationshipsToOutside() + " relationships left out because their other end is not on the target");
 

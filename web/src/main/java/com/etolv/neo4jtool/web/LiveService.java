@@ -17,7 +17,16 @@ import org.springframework.stereotype.Service;
 @Service
 public class LiveService {
 
-    public record Stage(String name, int number, int of, int percent, long elapsedSeconds, long etaSeconds) {
+    /**
+     * @param number          0 while neo4j-admin is getting ready (it opens every layout of the export before it reads a row)
+     * @param preparedSeconds how long that took, or -1 when it is not over
+     * @param finished        the steps of the import that are over, with their time
+     */
+    public record Stage(String name, int number, int of, int percent, long elapsedSeconds, long etaSeconds, long preparedSeconds,
+                        List<Finished> finished) {
+    }
+
+    public record Finished(String name, long seconds) {
     }
 
     public record LogLine(long id, String time, String cls, boolean important, String text) {
@@ -97,10 +106,18 @@ public class LiveService {
                     continue;
                 }
                 stepNumber = i + 1;
-                ImportWatch.Stage stage = live.importWatch().stage();
-                if (step.title().startsWith("Build the new database") && stage != null) {
+                ImportWatch watch = live.importWatch();
+                ImportWatch.Stage stage = watch.stage();
+                long preparing = watch.preparingSeconds();
+                boolean importStep = step.title().startsWith("Build the new database");
+                List<Finished> finished = watch.finished().stream().map(d -> new Finished(d.name(), d.seconds())).toList();
+                if (importStep && preparing >= 0) {
+                    importStage = new Stage("Getting ready", 0, 4, -1, preparing, -1, -1, finished);
+                    list.set(i, step.with(RunSteps.State.RUNNING, "Getting ready: neo4j-admin opens every layout of the export before it reads a row",
+                            -1));
+                } else if (importStep && stage != null) {
                     importStage = new Stage(stage.name(), stage.number(), stage.of(), stage.percent(), stage.elapsedSeconds(),
-                            stage.etaSeconds());
+                            stage.etaSeconds(), watch.preparedSeconds(), finished);
                     percent = stage.percent();
                     list.set(i, step.with(RunSteps.State.RUNNING, "Step " + stage.number() + " of " + stage.of() + ": " + stage.name(),
                             stage.percent()));

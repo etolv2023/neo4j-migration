@@ -202,6 +202,7 @@ public final class CsvExporter {
     private final Path directory;
     private final int batchSize;
     private final int workers;
+    private final int layoutColumns;
     private final DryRunProgress progress;
 
     private final Plans plans = new Plans();
@@ -214,6 +215,16 @@ public final class CsvExporter {
      */
     public CsvExporter(Source source, IdSet ids, List<Rule> rules, String filePrefix, Path directory, int batchSize,
                        int workers, DryRunProgress progress) {
+        this(source, ids, rules, filePrefix, directory, batchSize, workers, 0, progress);
+    }
+
+    /**
+     * @param layoutColumns the most columns a layout shared by several label sets may have; 0 writes a layout per distinct
+     *                      set of columns, as it always did (see {@link LayoutMerger})
+     */
+    public CsvExporter(Source source, IdSet ids, List<Rule> rules, String filePrefix, Path directory, int batchSize,
+                       int workers, int layoutColumns, DryRunProgress progress) {
+        this.layoutColumns = layoutColumns;
         this.source = source;
         this.ids = ids;
         this.rules = rules;
@@ -250,6 +261,10 @@ public final class CsvExporter {
             plans.merge(part.result());
         }
         plans.freeze();
+        LayoutMerger.Result merged = LayoutMerger.merge(plans.nodePlans.values(), layoutColumns);
+        progress.phase(layoutColumns > 0
+                ? "Export: sharing node layouts (at most " + layoutColumns + " columns): " + merged.describe()
+                : "Export: node layouts are not shared (the setting is off): " + merged.groups() + " groups of nodes");
 
         progress.phase("Export, pass 2 of 2: writing the CSV files");
         List<Scanner.Part<Pass2>> written = scanner.run(Pass2::new);
@@ -289,6 +304,7 @@ public final class CsvExporter {
 
         void observeNode(long id, List<String> labels, Map<String, Value> props) {
             GroupPlan plan = nodePlans.computeIfAbsent(labelKey(labels), k -> new GroupPlan());
+            plan.observeRow();
             for (Map.Entry<String, Value> property : props.entrySet()) {
                 ValueCodec.Encoded encoded = encodeNodeProperty(id, property.getKey(), property.getValue());
                 if (encoded != null) {

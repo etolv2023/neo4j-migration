@@ -282,7 +282,7 @@ public final class ReaderProcess implements FastReader {
 
     @Override
     public CsvExporter.Export export(IdSet ids, List<CsvExporter.Rule> rules, String prefix, Path directory, int batchSize,
-                                     int workers, DryRunProgress progress) {
+                                     int workers, int layoutColumns, DryRunProgress progress) {
         Map<IdSet, Path> written = new IdentityHashMap<>();
         ObjectNode args = JSON.createObjectNode();
         args.put("ids", fileOf(written, ids));
@@ -296,6 +296,7 @@ public final class ReaderProcess implements FastReader {
         args.put("dir", directory.toAbsolutePath().toString());
         args.put("batch", batchSize);
         args.put("workers", workers);
+        args.put("layoutColumns", layoutColumns);
         try {
             JsonNode result = call("export", args, progress);
             List<String> nodeFiles = new ArrayList<>();

@@ -54,4 +54,21 @@ class LogFilterTest {
         assertThat(kept).containsExactly("Backup: /var/backups/x.dump", "  /var/backups/x.dump",
                 "Export: 12 node layouts and 3 relationship layouts");
     }
+
+    @Test
+    void sayingHowLongTheImporterGotReadyIsPartOfTheLog() throws Exception {
+        List<String> kept = new ArrayList<>();
+        LogFilter filter = new LogFilter(kept::add, new ImportWatch());
+        ImportWatchTest.sample().forEach(filter);
+
+        int starting = -1;
+        for (int i = 0; i < kept.size(); i++) {
+            if (kept.get(i).startsWith("Import starting")) {
+                starting = i;
+            }
+        }
+        assertThat(starting).isGreaterThanOrEqualTo(0);
+        assertThat(kept.get(starting + 1)).contains("got ready for").contains("fewer layouts mean less waiting");
+        assertThat(kept).filteredOn(line -> line.contains("got ready for")).hasSize(1);
+    }
 }

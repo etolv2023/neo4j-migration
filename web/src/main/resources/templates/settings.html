@@ -60,6 +60,8 @@
                 <p class="hint">0 = one per core.</p></div>
             <div><label for="importMemory">Import memory</label><input id="importMemory" name="importMemory" type="text" th:value="${settings.importMemory()}" placeholder="(automatic: sized from this server's memory)">
                 <p class="hint">For example 24g. Leave room for the operating system.</p></div>
+            <div><label for="layoutColumns">Shared layout width (columns)</label><input id="layoutColumns" name="layoutColumns" type="number" min="0" max="10000" th:value="${settings.layoutColumns()}">
+                <p class="hint">Label sets whose properties do not contradict each other share one CSV layout of up to this many columns. The import opens every layout on its own (a third of a second each), so thousands of layouts mean half an hour of waiting before it starts. 0 = one layout per set of properties, as before.</p></div>
         </div>
         <div class="row">
             <div><label for="idSetMemoryMb">Memory for the selected ids (MB)</label><input id="idSetMemoryMb" name="idSetMemoryMb" type="number" min="16" th:value="${settings.idSetMemoryMb()}">

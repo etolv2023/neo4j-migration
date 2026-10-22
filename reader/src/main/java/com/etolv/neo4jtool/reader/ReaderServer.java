@@ -130,7 +130,7 @@ public final class ReaderServer {
                     rules.add(rule.get("outgoing").asBoolean() ? CsvExporter.Rule.out(other) : CsvExporter.Rule.in(other));
                 }
                 CsvExporter.Export export = new CsvExporter(source, ids, rules, c.path("prefix").asText(""),
-                        Path.of(c.get("dir").asText()), c.path("batch").asInt(10_000), workers, progress).export();
+                        Path.of(c.get("dir").asText()), c.path("batch").asInt(10_000), workers, c.path("layoutColumns").asInt(0), progress).export();
                 return exportResult(export);
             }
             case "verify": {

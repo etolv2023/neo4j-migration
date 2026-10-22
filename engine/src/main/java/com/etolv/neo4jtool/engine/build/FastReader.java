@@ -20,7 +20,7 @@ public interface FastReader extends AutoCloseable {
 
     /** Same as {@code new CsvExporter(...).export()}, run inside the reader process. */
     CsvExporter.Export export(IdSet ids, List<CsvExporter.Rule> rules, String prefix, Path directory, int batchSize, int workers,
-                              DryRunProgress progress);
+                              int layoutColumns, DryRunProgress progress);
 
     /** Same as {@link Verifier#verify}, run inside the reader process on the database it holds open. */
     void verify(Verifier.Expected expected, int batchSize, int workers, DryRunProgress progress);

@@ -191,7 +191,7 @@ class FastReaderIT {
 
         for (int workers : new int[] {1, 2, 4}) {
             Path dir = Files.createDirectories(temp.resolve("csv-fast-" + workers));
-            CsvExporter.Export fast = reader.export(ids, rules, "", dir, 100, workers, DryRunProgress.NONE);
+            CsvExporter.Export fast = reader.export(ids, rules, "", dir, 100, workers, 0, DryRunProgress.NONE);
             assertThat(fast.nodes()).isEqualTo(expected.nodes());
             assertThat(fast.relationships()).isEqualTo(expected.relationships());
             assertThat(fast.nodeFingerprint()).as("node fingerprint with %d workers", workers).isEqualTo(expected.nodeFingerprint());
@@ -214,7 +214,7 @@ class FastReaderIT {
         CsvExporter.Export expected = new CsvExporter(CsvExporter.bolt(bolt), missing, rules, "r-", boltDir, 100, 2,
                 DryRunProgress.NONE).export();
         Path dir = Files.createDirectories(temp.resolve("in-fast"));
-        CsvExporter.Export fast = reader.export(missing, rules, "r-", dir, 100, 3, DryRunProgress.NONE);
+        CsvExporter.Export fast = reader.export(missing, rules, "r-", dir, 100, 3, 0, DryRunProgress.NONE);
         assertThat(fast.relationships()).isEqualTo(expected.relationships()).isGreaterThan(0);
         assertThat(fast.relationshipFingerprint()).isEqualTo(expected.relationshipFingerprint());
         assertThat(fast.relationshipsToOutside()).isEqualTo(expected.relationshipsToOutside());
@@ -226,7 +226,7 @@ class FastReaderIT {
         IdSet ids = viaBolt(SelectionConfig.everything());
         // the whole database as it is: export once to get its totals
         CsvExporter.Export all = reader.export(ids, List.of(CsvExporter.Rule.out(ids)), "", temp.resolve("verify").toFile().mkdirs()
-                ? temp.resolve("verify") : temp.resolve("verify"), 100, 2, DryRunProgress.NONE);
+                ? temp.resolve("verify") : temp.resolve("verify"), 100, 2, 0, DryRunProgress.NONE);
         Verifier.Expected right = Verifier.Expected.of(ids, all);
         reader.verify(right, 100, 3, DryRunProgress.NONE);
 

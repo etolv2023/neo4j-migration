@@ -63,9 +63,9 @@ public final class SplitService {
             phases.start("Exporting the selection to CSV");
             List<CsvExporter.Rule> rules = List.of(CsvExporter.Rule.out(ids));
             CsvExporter.Export export = fast != null
-                    ? fast.export(ids, rules, "", csv, options.batchSize(), options.workers(), progress)
+                    ? fast.export(ids, rules, "", csv, options.batchSize(), options.workers(), options.layoutColumns(), progress)
                     : new CsvExporter(CsvExporter.bolt(source), ids, rules, "", csv, options.batchSize(), options.workers(),
-                            progress).export();
+                            options.layoutColumns(), progress).export();
             log.accept(export.nodes() + " nodes, " + export.relationships() + " relationships exported; "
                     + export.fixups().size() + " properties will be written afterwards; "
                     + export.relationshipsToOutside() + " relationships to nodes outside the selection are left out");

@@ -672,6 +672,27 @@ class WebIT {
     }
 
     @Test
+    @Order(21)
+    void theSharedLayoutWidthIsASettingThatCanBeTurnedOff() throws Exception {
+        AppSettings before = settings.get();
+        try {
+            assertThat(before.layoutColumns()).isEqualTo(100);
+            mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000", Map.of("layoutColumns", "40"))
+                    .with(ADMIN).with(csrf()));
+            assertThat(settings.get().layoutColumns()).isEqualTo(40);
+            mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000", Map.of("layoutColumns", "0"))
+                    .with(ADMIN).with(csrf()));
+            assertThat(settings.get().layoutColumns()).isZero();
+            mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000", Map.of("layoutColumns", "-1"))
+                    .with(ADMIN).with(csrf())).andExpect(flash().attribute("error", containsString("Shared layout width")));
+            assertThat(settings.get().layoutColumns()).isZero();
+            mvc.perform(get("/settings").with(ADMIN)).andExpect(content().string(containsString("Shared layout width (columns)")));
+        } finally {
+            settings.save(before);
+        }
+    }
+
+    @Test
     @Order(22)
     void linesWithoutAnOrganisationComeWithTheirParentAndWhatIsLeftOutIsListed() throws Exception {
         // A line that only belongs to a node of company 1 (no organisation of its own), and a link from company 1 to company 2.

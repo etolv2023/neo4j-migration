@@ -1,5 +1,6 @@
 package com.etolv.neo4jtool.web;
 
+import com.etolv.neo4jtool.engine.build.BuildOptions;
 import com.etolv.neo4jtool.engine.instance.InstanceSettings;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -33,6 +34,8 @@ import java.time.Duration;
  * @param requireTwoFactor every user must sign in with a second factor; a user without one is sent to set it up after the password
  * @param sessionHours how long a sign-in stays valid without any activity
  * @param liveSeconds  how often a page that shows a running job, and the resource bar, ask for news (seconds)
+ * @param layoutColumns the most columns a CSV layout shared by several label sets may have; the importer opens every layout
+ *                      on its own, so a database with thousands of label sets waits for it for half an hour (0 = no sharing)
  */
 public record AppSettings(
         InstanceSettings.Runner runner,
@@ -64,7 +67,21 @@ public record AppSettings(
         boolean splitAsDirectory,
         boolean requireTwoFactor,
         int sessionHours,
-        int liveSeconds) {
+        int liveSeconds,
+        int layoutColumns) {
+
+    /** The settings as they were before the layouts could be shared: up to 100 columns. */
+    public AppSettings(InstanceSettings.Runner runner, String dockerImage, String neo4jHome, String workDir, String outputDir,
+                       String backupDir, boolean mergeSwap, boolean copySchema, boolean checkAfterBuild, String tempHeap,
+                       String tempPageCache, int startTimeoutMinutes, String orgProperty, boolean includeNeighbours, int batchSize,
+                       int sampleSize, boolean analyseRelationships, boolean fastReader, String readerLib, String readerHeap,
+                       String readerPageCache, int workers, int importThreads, String importMemory, int idSetMemoryMb, int maxJobs,
+                       boolean splitAsDirectory, boolean requireTwoFactor, int sessionHours, int liveSeconds) {
+        this(runner, dockerImage, neo4jHome, workDir, outputDir, backupDir, mergeSwap, copySchema, checkAfterBuild, tempHeap,
+                tempPageCache, startTimeoutMinutes, orgProperty, includeNeighbours, batchSize, sampleSize, analyseRelationships,
+                fastReader, readerLib, readerHeap, readerPageCache, workers, importThreads, importMemory, idSetMemoryMb, maxJobs,
+                splitAsDirectory, requireTwoFactor, sessionHours, liveSeconds, BuildOptions.DEFAULT_LAYOUT_COLUMNS);
+    }
 
     /** The settings as they were before the live refresh could be set: every 2 seconds. */
     public AppSettings(InstanceSettings.Runner runner, String dockerImage, String neo4jHome, String workDir, String outputDir,

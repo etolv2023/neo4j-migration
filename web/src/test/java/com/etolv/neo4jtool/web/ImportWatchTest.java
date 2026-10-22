@@ -59,4 +59,45 @@ class ImportWatchTest {
         assertThat(new ImportWatch.Stage(1, 4, "Node import", 2, tenSecondsAgo).etaSeconds()).isEqualTo(-1);
         assertThat(new ImportWatch.Stage(1, 4, "Node import", 100, tenSecondsAgo).etaSeconds()).isEqualTo(-1);
     }
+
+    @Test
+    void tellsWhenTheImporterIsGettingReadyAndHowLongThatTookAndWhichStepsAreOver() throws Exception {
+        ImportWatch watch = new ImportWatch();
+        assertThat(watch.preparingSeconds()).isEqualTo(-1);
+        assertThat(watch.preparedSeconds()).isEqualTo(-1);
+
+        boolean sawPreparing = false;
+        for (String line : sample()) {
+            watch.accept(line);
+            if (watch.preparingSeconds() >= 0) {
+                sawPreparing = true;
+                assertThat(watch.stage()).isNull();           // no step has begun while it is getting ready
+            }
+        }
+
+        assertThat(sawPreparing).isTrue();
+        assertThat(watch.preparingSeconds()).isEqualTo(-1);   // over: it read rows
+        assertThat(watch.preparedSeconds()).isGreaterThanOrEqualTo(0);
+        assertThat(watch.finished()).extracting(ImportWatch.Done::name).containsExactly("Node import", "Relationship import");
+    }
+
+    @Test
+    void aSecondImportStartsFromScratch() throws Exception {
+        ImportWatch watch = new ImportWatch();
+        sample().forEach(watch::accept);
+        assertThat(watch.finished()).isNotEmpty();
+
+        watch.accept("Available resources:");
+
+        assertThat(watch.finished()).isEmpty();
+        assertThat(watch.stage()).isNull();
+        assertThat(watch.preparingSeconds()).isGreaterThanOrEqualTo(0);
+    }
+
+    @Test
+    void writesDurationsTheWayAPersonReadsThem() {
+        assertThat(ImportWatch.text(45)).isEqualTo("45 s");
+        assertThat(ImportWatch.text(33 * 60 + 12)).isEqualTo("33 min 12 s");
+        assertThat(ImportWatch.text(3720)).isEqualTo("1 h 2 min");
+    }
 }

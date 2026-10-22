@@ -84,6 +84,12 @@
             setRes('disk', 'Disk free', bytes(r.disk_free) + ' of ' + bytes(r.disk_total), 100 - free, free < 5 ? 'bad' : free < 10 ? 'warn' : '');
         }
         if (r.cpu_percent != null) { setRes('cpu', 'CPU', r.cpu_percent + '%', r.cpu_percent, ''); }
+        if (r.iowait_percent != null) {
+            // time the processor spends waiting for a disk: high while the disk is what slows a job down
+            var io = r.iowait_percent;
+            var rates = r.disk_read_per_second != null ? ' · R ' + bytes(r.disk_read_per_second) + '/s · W ' + bytes(r.disk_write_per_second) + '/s' : '';
+            setRes('io', 'Disk wait', io + '%' + rates, io, io >= 60 ? 'bad' : io >= 30 ? 'warn' : '');
+        }
         if (r.job_rss != null) { setRes('job', 'Job processes', bytes(r.job_rss), null, ''); }
     }
 
@@ -127,9 +133,19 @@
         if (!job.stage && job.per_second >= 0) { parts.push(num(job.per_second) + ' per second'); }
         if (job.eta_seconds >= 0) { parts.push('about ' + dur(job.eta_seconds) + ' left in this step'); }
         part('numbers').textContent = parts.join(' · ');
-        part('stage').textContent = job.stage
-            ? 'neo4j-admin import · part ' + job.stage.number + ' of ' + job.stage.of + ': ' + job.stage.name + ' · ' + job.stage.percent + '%'
-            : (job.total < 0 && job.phase_seconds > 0 ? 'this step has taken ' + dur(job.phase_seconds) + ' so far' : '');
+        var stageText = '';
+        if (job.stage) {
+            stageText = job.stage.number === 0
+                ? 'neo4j-admin import · getting ready for ' + dur(job.stage.elapsed_seconds) + ' (it opens every layout of the export before it reads a row)'
+                : 'neo4j-admin import · part ' + job.stage.number + ' of ' + job.stage.of + ': ' + job.stage.name + ' · ' + job.stage.percent + '%';
+            var done = [];
+            if (job.stage.prepared_seconds >= 0) { done.push('getting ready ' + dur(job.stage.prepared_seconds)); }
+            (job.stage.finished || []).forEach(function (f) { done.push(f.name + ' ' + dur(f.seconds)); });
+            if (done.length) { stageText += ' · done: ' + done.join(', '); }
+        } else if (job.total < 0 && job.phase_seconds > 0) {
+            stageText = 'this step has taken ' + dur(job.phase_seconds) + ' so far';
+        }
+        part('stage').textContent = stageText;
     }
 
     function syncList(list, steps) {

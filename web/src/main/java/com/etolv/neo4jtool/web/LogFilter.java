@@ -29,6 +29,13 @@ final class LogFilter implements Consumer<String> {
                 return;
             }
             watch.accept(line);
+            if (line.startsWith("Import starting") && watch.preparedSeconds() >= 0) {
+                flushFiles();
+                next.accept(line);
+                next.accept("  The importer got ready for " + ImportWatch.text(watch.preparedSeconds())
+                        + " before it read the first row: it opens every layout of the export on its own, so fewer layouts mean less waiting");
+                return;
+            }
             if (line.isBlank()) {
                 return;
             }

@@ -17,10 +17,24 @@ import org.springframework.stereotype.Service;
 @Service
 public class Resources {
 
-    /** Sizes are in bytes; {@code cpuPercent} is 0 to 100. */
+    /**
+     * Sizes are in bytes; {@code cpuPercent} is 0 to 100. {@code iowaitPercent} is the share of the processor's time spent waiting
+     * for a disk, and the two rates are what the disks of the machine read and wrote per second, both over the time since the
+     * reading before (null until there are two close readings).
+     */
     public record Snapshot(Long ramTotal, Long ramUsed, Long swapTotal, Long swapUsed, Long diskTotal, Long diskFree,
-                           Integer cpuPercent, Long jobRss, Integer jobProcesses) {
+                           Integer cpuPercent, Long jobRss, Integer jobProcesses, Integer iowaitPercent, Long diskReadPerSecond,
+                           Long diskWritePerSecond) {
     }
+
+    /** What /proc counted up to a moment: processor time (all, waiting for disks), and the sectors the disks read and wrote. */
+    record Counters(long at, long cpuTotal, long cpuIowait, long sectorsRead, long sectorsWritten) {
+    }
+
+    /** Two readings further apart than this say nothing about now. */
+    private static final long MAX_GAP_MILLIS = 15_000;
+    private static final long SECTOR = 512;
+    private Counters before;
 
     private final java.util.function.Supplier<String> workDir;
     private Snapshot cached;
@@ -98,8 +112,73 @@ public class Resources {
         } catch (RuntimeException e) {
             // the page leaves the processes out
         }
+        Counters now = counters();
+        Integer iowait = null;
+        Long readRate = null;
+        Long writeRate = null;
+        if (now != null && before != null && now.at() - before.at() >= 500 && now.at() - before.at() <= MAX_GAP_MILLIS) {
+            long seconds1000 = now.at() - before.at();
+            long cpuDelta = now.cpuTotal() - before.cpuTotal();
+            if (cpuDelta > 0) {
+                iowait = (int) Math.round((now.cpuIowait() - before.cpuIowait()) * 100.0 / cpuDelta);
+            }
+            readRate = Math.max(0, (now.sectorsRead() - before.sectorsRead()) * SECTOR * 1000 / seconds1000);
+            writeRate = Math.max(0, (now.sectorsWritten() - before.sectorsWritten()) * SECTOR * 1000 / seconds1000);
+        }
+        if (now != null) {
+            before = now;
+        }
         return new Snapshot(ramTotal, ramUsed, swapTotal, swapUsed, diskTotal, diskFree, cpu, processes > 0 ? rss : null,
-                processes > 0 ? processes : null);
+                processes > 0 ? processes : null, iowait, readRate, writeRate);
+    }
+
+    /** The counters of /proc now, or null where there are none (not Linux). */
+    private static Counters counters() {
+        try {
+            Path stat = Path.of("/proc/stat");
+            Path disks = Path.of("/proc/diskstats");
+            if (!Files.isReadable(stat)) {
+                return null;
+            }
+            long[] cpu = parseCpuStat(Files.readAllLines(stat));
+            long[] sectors = Files.isReadable(disks) ? parseDiskstats(Files.readAllLines(disks)) : new long[] {0, 0};
+            return new Counters(System.currentTimeMillis(), cpu[0], cpu[1], sectors[0], sectors[1]);
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** From the first "cpu" line of /proc/stat: {all time, time waiting for disks}, in ticks. */
+    static long[] parseCpuStat(List<String> lines) {
+        for (String line : lines) {
+            if (line.startsWith("cpu ")) {
+                String[] parts = line.trim().split("\\s+");
+                long total = 0;
+                // user nice system idle iowait irq softirq steal; guest time is already in user
+                for (int i = 1; i <= 8 && i < parts.length; i++) {
+                    total += Long.parseLong(parts[i]);
+                }
+                return new long[] {total, parts.length > 5 ? Long.parseLong(parts[5]) : 0};
+            }
+        }
+        throw new IllegalArgumentException("No cpu line");
+    }
+
+    private static final java.util.regex.Pattern WHOLE_DISK =
+            java.util.regex.Pattern.compile("(sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+|nvme\\d+n\\d+|mmcblk\\d+)");
+
+    /** From /proc/diskstats: {sectors read, sectors written} by the whole disks (not their partitions, which would count twice). */
+    static long[] parseDiskstats(List<String> lines) {
+        long read = 0;
+        long written = 0;
+        for (String line : lines) {
+            String[] parts = line.trim().split("\\s+");
+            if (parts.length > 9 && WHOLE_DISK.matcher(parts[2]).matches()) {
+                read += Long.parseLong(parts[5]);
+                written += Long.parseLong(parts[9]);
+            }
+        }
+        return new long[] {read, written};
     }
 
     /** /proc/meminfo in bytes, empty where there is none (not Linux). */

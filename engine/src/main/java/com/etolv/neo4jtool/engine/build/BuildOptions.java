@@ -11,10 +11,15 @@ package com.etolv.neo4jtool.engine.build;
  *                         saves writing and later reading the whole store again; ignored by a merge
  * @param fastReaders      opens the finished database for the fast, parallel comparison with what was exported; null
  *                         compares over Bolt on the temporary server instead
+ * @param layoutColumns    the most columns a CSV layout shared by several label sets may have, so that the importer has few
+ *                         layouts to open (each costs it a third of a second before it starts); 0 = no sharing
  */
 public record BuildOptions(int batchSize, boolean copySchema, boolean checkConsistency, int workers, int importThreads,
                            String importMemory, boolean directoryOutput,
-                           FastReader.Factory fastReaders) {
+                           FastReader.Factory fastReaders, int layoutColumns) {
+
+    /** Layouts are shared up to this width unless told otherwise. */
+    public static final int DEFAULT_LAYOUT_COLUMNS = 100;
 
     public BuildOptions {
         if (batchSize < 100) {
@@ -26,16 +31,19 @@ public record BuildOptions(int batchSize, boolean copySchema, boolean checkConsi
         if (importThreads < 0 || importThreads > 1024) {
             throw new IllegalArgumentException("importThreads must be between 0 and 1024");
         }
+        if (layoutColumns < 0 || layoutColumns > 10_000) {
+            throw new IllegalArgumentException("layoutColumns must be between 0 and 10000");
+        }
         importMemory = importMemory == null ? "" : importMemory.trim();
     }
 
     public BuildOptions(int batchSize, boolean copySchema, boolean checkConsistency) {
-        this(batchSize, copySchema, checkConsistency, 1, 0, "", false, null);
+        this(batchSize, copySchema, checkConsistency, 1, 0, "", false, null, DEFAULT_LAYOUT_COLUMNS);
     }
 
     public BuildOptions(int batchSize, boolean copySchema, boolean checkConsistency, int workers, int importThreads,
                         String importMemory, FastReader.Factory fastReaders) {
-        this(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, false, fastReaders);
+        this(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, false, fastReaders, DEFAULT_LAYOUT_COLUMNS);
     }
 
     public static BuildOptions defaults() {
@@ -43,14 +51,18 @@ public record BuildOptions(int batchSize, boolean copySchema, boolean checkConsi
     }
 
     public BuildOptions withWorkers(int workers) {
-        return new BuildOptions(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, directoryOutput, fastReaders);
+        return new BuildOptions(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, directoryOutput, fastReaders, layoutColumns);
     }
 
     public BuildOptions withDirectoryOutput(boolean directoryOutput) {
-        return new BuildOptions(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, directoryOutput, fastReaders);
+        return new BuildOptions(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, directoryOutput, fastReaders, layoutColumns);
+    }
+
+    public BuildOptions withLayoutColumns(int layoutColumns) {
+        return new BuildOptions(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, directoryOutput, fastReaders, layoutColumns);
     }
 
     public BuildOptions withFastReaders(FastReader.Factory fastReaders) {
-        return new BuildOptions(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, directoryOutput, fastReaders);
+        return new BuildOptions(batchSize, copySchema, checkConsistency, workers, importThreads, importMemory, directoryOutput, fastReaders, layoutColumns);
     }
 }

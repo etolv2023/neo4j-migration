@@ -50,7 +50,8 @@ public class SettingsStore {
                 Boolean.parseBoolean(rows.getOrDefault("split_as_directory", String.valueOf(d.splitAsDirectory()))),
                 Boolean.parseBoolean(rows.getOrDefault("require_two_factor", String.valueOf(d.requireTwoFactor()))),
                 Integer.parseInt(rows.getOrDefault("session_hours", String.valueOf(d.sessionHours()))),
-                Integer.parseInt(rows.getOrDefault("live_seconds", String.valueOf(d.liveSeconds()))));
+                Integer.parseInt(rows.getOrDefault("live_seconds", String.valueOf(d.liveSeconds()))),
+                Integer.parseInt(rows.getOrDefault("layout_columns", String.valueOf(d.layoutColumns()))));
     }
 
     /** @throws IllegalArgumentException when a value cannot work */
@@ -86,6 +87,7 @@ public class SettingsStore {
         put("require_two_factor", String.valueOf(s.requireTwoFactor()));
         put("session_hours", String.valueOf(s.sessionHours()));
         put("live_seconds", String.valueOf(s.liveSeconds()));
+        put("layout_columns", String.valueOf(s.layoutColumns()));
     }
 
     private static void validate(AppSettings s) {
@@ -121,6 +123,9 @@ public class SettingsStore {
         }
         if (s.liveSeconds() < 1 || s.liveSeconds() > 60) {
             throw new IllegalArgumentException("The live refresh must be between 1 and 60 seconds");
+        }
+        if (s.layoutColumns() < 0 || s.layoutColumns() > 10_000) {
+            throw new IllegalArgumentException("Shared layout width must be 0 (off) or at most 10000 columns");
         }
         if (s.idSetMemoryMb() < 16) {
             throw new IllegalArgumentException("Memory for the selected ids must be at least 16 MB");
