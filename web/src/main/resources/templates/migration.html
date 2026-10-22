@@ -20,10 +20,22 @@
         <div th:class="${'s ' + (result != null ? 'done' : (dryRun != null ? 'now' : 'off'))}"><b>4</b><span>Run</span></div>
     </div>
 
-    <div class="flash work" th:if="${migration.state().busy()}">
-        <b th:text="${migration.state().label()}"></b> —
-        <span th:if="${progress != null}" th:text="${progress.phase() + (progress.total() >= 0 ? ': ' + @fmt.number(progress.done()) + ' / ' + @fmt.number(progress.total()) : '')}"></span>
-        <span th:if="${progress == null}">starting</span>. This page refreshes by itself.
+    <div class="card progress-card" id="job-progress" th:if="${migration.state().busy()}">
+        <div class="progress-head">
+            <span class="spinner"></span><b th:text="${migration.state().label()}"></b>
+            <span class="muted" th:if="${progress != null}" th:text="'running for ' + ${@fmt.duration(progress.elapsedSeconds())}"></span>
+        </div>
+        <div class="phase" th:text="${progress != null ? progress.phase() : 'Starting'}"></div>
+        <div th:class="${'bar' + (progress == null || progress.percent() < 0 ? ' indeterminate' : '')}"><i th:style="${progress != null && progress.percent() >= 0} ? 'width:' + ${progress.percent()} + '%'"></i></div>
+        <div class="numbers" th:if="${progress != null && progress.total() >= 0}">
+            <b th:text="${progress.percent()} + '%'"></b>
+            <span th:text="${@fmt.number(progress.done()) + ' of ' + @fmt.number(progress.total())}"></span>
+            <span th:if="${progress.perSecond() >= 0}" th:text="${@fmt.number(progress.perSecond()) + ' per second'}"></span>
+            <span th:if="${progress.etaSeconds() >= 0}" th:text="'about ' + ${@fmt.duration(progress.etaSeconds())} + ' left in this step'"></span>
+        </div>
+        <div class="numbers muted" th:if="${progress != null && progress.total() < 0 && progress.phaseSeconds() > 0}"
+             th:text="'this step has taken ' + ${@fmt.duration(progress.phaseSeconds())} + ' so far'"></div>
+        <p class="hint">This page updates by itself. You can close it; the job keeps running.</p>
     </div>
     <div class="flash err" th:if="${migration.lastError() != null}">
         <b>The last step failed.</b> <span th:text="${migration.lastError()}"></span>
@@ -173,9 +185,10 @@
 
     <!-- Log -->
     <div class="card">
-        <h2>Log</h2>
-        <p class="muted" th:if="${log.isEmpty()}">Nothing has run yet.</p>
-        <div class="log" th:if="${!log.isEmpty()}"><div th:each="l : ${log}" th:class="${l.level()}"><span class="t" th:text="${@fmt.time(l.at())}"></span><span th:text="${l.message()}"></span></div></div>
+        <div class="head" style="margin-bottom:8px"><h2>Log</h2>
+            <button type="button" class="secondary" data-copy="#job-log">Copy log</button></div>
+        <p class="muted" th:if="${log.isEmpty() && !migration.state().busy()}">Nothing has run yet.</p>
+        <div class="log" id="job-log" th:style="${log.isEmpty() ? 'display:none' : null}"><div th:each="l : ${log}" th:class="${l.level()}"><span class="t" th:text="${@fmt.time(l.at())}"></span><span th:text="${l.message()}"></span></div></div>
     </div>
 </main>
 </body>

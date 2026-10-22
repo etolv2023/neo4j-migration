@@ -39,7 +39,40 @@ public class MigrationJobs {
 
     private static final Logger log = LoggerFactory.getLogger(MigrationJobs.class);
 
-    public record Progress(String phase, long done, long total) {
+    /**
+     * Where a running job is: the phase it is in, how far that phase has got ({@code total} is -1 while it is not known),
+     * when the phase and the whole job began, and which phase it is (the first is 1).
+     */
+    public record Progress(String phase, long done, long total, long phaseStartedMillis, long jobStartedMillis, int phaseNumber) {
+
+        public Progress(String phase, long done, long total) {
+            this(phase, done, total, System.currentTimeMillis(), System.currentTimeMillis(), 1);
+        }
+
+        /** 0 to 100, or -1 when the size of the phase is not known. */
+        public int percent() {
+            return total <= 0 ? -1 : (int) Math.min(100, done * 100 / total);
+        }
+
+        public long elapsedSeconds() {
+            return Math.max(0, (System.currentTimeMillis() - jobStartedMillis) / 1000);
+        }
+
+        public long phaseSeconds() {
+            return Math.max(0, (System.currentTimeMillis() - phaseStartedMillis) / 1000);
+        }
+
+        /** Items per second in this phase so far, or -1 when there is nothing to base it on. */
+        public long perSecond() {
+            long seconds = phaseSeconds();
+            return done > 0 && seconds > 0 ? done / seconds : -1;
+        }
+
+        /** Seconds left in this phase at the current speed, or -1 when it cannot be told. */
+        public long etaSeconds() {
+            long rate = perSecond();
+            return total > 0 && rate > 0 && done < total ? (total - done) / rate : -1;
+        }
     }
 
     private final MigrationStore migrations;
@@ -343,20 +376,26 @@ public class MigrationJobs {
     }
 
     private DryRunProgress progress(long migrationId, Consumer<String> out) {
+        Progress before = running.get(migrationId);
+        long jobStarted = before == null ? System.currentTimeMillis() : before.jobStartedMillis();
         return new DryRunProgress() {
             private volatile String phase = "Starting";
+            private volatile long phaseStarted = System.currentTimeMillis();
+            private volatile int phaseNumber;
             private volatile long lastLogged;
 
             @Override
             public void phase(String name) {
                 phase = name;
-                running.put(migrationId, new Progress(name, 0, -1));
+                phaseStarted = System.currentTimeMillis();
+                phaseNumber++;
+                running.put(migrationId, new Progress(name, 0, -1, phaseStarted, jobStarted, phaseNumber));
                 out.accept(name);
             }
 
             @Override
             public void progress(long done, long total) {
-                running.put(migrationId, new Progress(phase, done, total));
+                running.put(migrationId, new Progress(phase, done, total, phaseStarted, jobStarted, phaseNumber));
                 long now = System.currentTimeMillis();
                 if (now - lastLogged > 10_000) {
                     lastLogged = now;

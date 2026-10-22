@@ -29,5 +29,95 @@
         <th:block th:replace="${content}"></th:block>
     </main>
 </div>
+<div class="busy-overlay" id="busy" hidden>
+    <div class="busy-box"><span class="spinner big"></span><p id="busy-text">Working…</p><p class="hint">Please wait. Leave this page open.</p></div>
+</div>
+<script>
+(function () {
+    var busy = document.getElementById('busy');
+    function working(text) {
+        document.getElementById('busy-text').textContent = text;
+        busy.hidden = false;
+    }
+    function reset() {
+        busy.hidden = true;
+        document.querySelectorAll('.loading').forEach(function (b) { b.classList.remove('loading'); b.disabled = false; b.removeAttribute('aria-busy'); });
+    }
+    window.addEventListener('pageshow', reset);
+
+    // every button that sends a form shows a spinner and cannot be pressed twice
+    document.addEventListener('submit', function (e) {
+        var form = e.target;
+        var button = e.submitter || form.querySelector('button[type=submit]');
+        if (button) {
+            button.classList.add('loading');
+            button.setAttribute('aria-busy', 'true');
+            setTimeout(function () { button.disabled = true; }, 0);
+        }
+        if (form.dataset.loader) { working(form.dataset.loader); }
+    });
+    // links that start something slow
+    document.addEventListener('click', function (e) {
+        var link = e.target.closest && e.target.closest('a[data-loader]');
+        if (link && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+            link.classList.add('loading');
+            working(link.dataset.loader);
+        }
+    });
+
+    // "Copy log": the text of a log box or a table, one line per row
+    document.addEventListener('click', function (e) {
+        var button = e.target.closest && e.target.closest('[data-copy]');
+        if (!button) { return; }
+        var box = document.querySelector(button.dataset.copy);
+        if (!box) { return; }
+        var rows = box.querySelectorAll('tr, .log > div');
+        var text = Array.prototype.map.call(rows.length ? rows : [box], function (row) {
+            var cells = row.children.length ? Array.prototype.map.call(row.children, function (c) { return c.innerText.trim(); }) : [row.innerText.trim()];
+            return cells.join('  ');
+        }).join('\n');
+        function done() {
+            var old = button.textContent;
+            button.textContent = 'Copied ✓';
+            setTimeout(function () { button.textContent = old; }, 2000);
+        }
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(done, fallback);
+        } else {
+            fallback();
+        }
+        function fallback() {
+            var area = document.createElement('textarea');
+            area.value = text;
+            area.style.position = 'fixed';
+            area.style.opacity = '0';
+            document.body.appendChild(area);
+            area.select();
+            try { document.execCommand('copy'); done(); } catch (err) { button.textContent = 'Copy failed'; }
+            document.body.removeChild(area);
+        }
+    });
+
+    // a job page that is working fetches itself again every two seconds and swaps in the new progress and log
+    var progress = document.getElementById('job-progress');
+    if (progress) {
+        var timer = setInterval(function () {
+            fetch(window.location.href, { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (html) {
+                var next = new DOMParser().parseFromString(html, 'text/html');
+                var fresh = next.getElementById('job-progress');
+                if (!fresh) { clearInterval(timer); window.location.reload(); return; }
+                progress.innerHTML = fresh.innerHTML;
+                var log = document.getElementById('job-log'), freshLog = next.getElementById('job-log');
+                if (log && freshLog) {
+                    var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+                    log.innerHTML = freshLog.innerHTML;
+                    log.style.display = freshLog.style.display;
+                    if (atBottom) { log.scrollTop = log.scrollHeight; }
+                }
+            }).catch(function () { /* the page refreshes by itself as a fallback */ });
+        }, 2000);
+    }
+})();
+</script>
 </body>
 </html>

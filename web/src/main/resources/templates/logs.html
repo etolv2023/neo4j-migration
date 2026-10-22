@@ -10,7 +10,8 @@
     </div>
     <div class="card" th:if="${tab == 'jobs'}">
         <p class="muted" th:if="${lines.isEmpty()}">No job has run yet.</p>
-        <table th:if="${!lines.isEmpty()}">
+        <p th:if="${!lines.isEmpty()}"><button type="button" class="secondary" data-copy="#jobs-table">Copy log</button></p>
+        <table id="jobs-table" th:if="${!lines.isEmpty()}">
             <thead><tr><th>When</th><th>Migration</th><th>Message</th></tr></thead>
             <tbody><tr th:each="l : ${lines}">
                 <td class="muted" th:text="${@fmt.time(l.at())}"></td>
@@ -20,7 +21,8 @@
     </div>
     <div class="card" th:if="${tab != 'jobs'}">
         <p class="muted" th:if="${entries.isEmpty()}">Nothing yet.</p>
-        <table th:if="${!entries.isEmpty()}">
+        <p th:if="${!entries.isEmpty()}"><button type="button" class="secondary" data-copy="#entries-table">Copy log</button></p>
+        <table id="entries-table" th:if="${!entries.isEmpty()}">
             <thead><tr><th>When</th><th>Who</th><th>What</th><th>Details</th></tr></thead>
             <tbody><tr th:each="e : ${entries}">
                 <td class="muted" th:text="${@fmt.time(e.at())}"></td><td th:text="${e.actor()}"></td>

@@ -35,7 +35,12 @@ import org.neo4j.driver.Value;
  */
 public final class CsvExporter {
 
-    private static final int MAX_OPEN_FILES = 512;
+    /**
+     * How many CSV files one worker keeps open at once. A database can have thousands of different layouts (label
+     * sets and property type combinations); the least recently used file is closed when the limit is reached and opened
+     * again for appending when a row for it comes back, so the number of layouts is not limited by open files.
+     */
+    private static final int MAX_OPEN_FILES = 128;
 
     /**
      * Which relationships of the exported nodes are written: those that leave an exported node ({@link #out}) or
@@ -200,6 +205,8 @@ public final class CsvExporter {
     private final DryRunProgress progress;
 
     private final Plans plans = new Plans();
+    private final Layouts nodeLayouts = new Layouts();
+    private final Layouts relationshipLayouts = new Layouts();
 
     /**
      * @param filePrefix put in front of the names of the files, so that several exports can share one directory
@@ -247,24 +254,28 @@ public final class CsvExporter {
         progress.phase("Export, pass 2 of 2: writing the CSV files");
         List<Scanner.Part<Pass2>> written = scanner.run(Pass2::new);
         List<Fixups> fixupParts = new ArrayList<>();
-        List<String> nodeFiles = new ArrayList<>();
-        List<String> relationshipFiles = new ArrayList<>();
         long nodes = 0;
         long relationships = 0;
         long nodeHash = 0;
         long relationshipHash = 0;
         long outside = 0;
+        List<Writers> nodeWriters = new ArrayList<>();
+        List<Writers> relationshipWriters = new ArrayList<>();
         for (Scanner.Part<Pass2> part : written) {
             Pass2 local = part.result();
             fixupParts.add(local.fixups());
-            nodeFiles.addAll(local.nodeFiles.names());
-            relationshipFiles.addAll(local.relationshipFiles.names());
+            nodeWriters.add(local.nodeFiles);
+            relationshipWriters.add(local.relationshipFiles);
             nodes += local.nodeCount;
             relationships += local.relationshipCount;
             nodeHash += local.nodeHash;
             relationshipHash += local.relationshipHash;
             outside += part.outside();
         }
+        List<String> nodeFiles = nodeLayouts.finish("nodes", filePrefix, directory, nodeWriters);
+        List<String> relationshipFiles = relationshipLayouts.finish("relationships", filePrefix, directory, relationshipWriters);
+        progress.phase("Export: " + nodeLayouts.count() + " node layouts and " + relationshipLayouts.count()
+                + " relationship layouts written by " + written.size() + " workers");
         return new Export(nodeFiles, relationshipFiles, nodes, relationships, nodeHash, relationshipHash, Fixups.of(fixupParts), outside);
     }
 
@@ -357,8 +368,8 @@ public final class CsvExporter {
         long relationshipHash;
 
         Pass2(int worker) {
-            nodeFiles = new Writers(filePrefix + "nodes-w" + worker, true);
-            relationshipFiles = new Writers(filePrefix + "relationships-w" + worker, false);
+            nodeFiles = new Writers("nodes", worker, true, nodeLayouts);
+            relationshipFiles = new Writers("relationships", worker, false, relationshipLayouts);
             fixupName = filePrefix + "fixups-w" + worker + ".jsonl";
         }
 
@@ -449,22 +460,76 @@ public final class CsvExporter {
         return String.join("\u0000", sorted);
     }
 
-    /** The CSV files of one kind of entity, opened when the first row for them arrives. */
-    private final class Writers {
+    /**
+     * The layouts of one kind of entity (nodes or relationships). Every distinct layout gets a number shared by all
+     * workers, so that all the parts of a layout can be named together: {@code nodes-h3.csv} holds the header,
+     * {@code nodes-p3-w0.csv}, {@code nodes-p3-w1.csv}, ... hold the rows written by each worker, without a header.
+     */
+    private static final class Layouts {
 
-        private final String prefix;
-        private final boolean nodes;
-        private final Map<String, BufferedWriter> writers = new HashMap<>();
-        private final Map<String, List<String>> columns = new HashMap<>();
-        private final List<String> names = new ArrayList<>();
+        private final java.util.concurrent.ConcurrentHashMap<String, Integer> numbers = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.ConcurrentHashMap<Integer, String> headers = new java.util.concurrent.ConcurrentHashMap<>();
+        private final java.util.concurrent.atomic.AtomicInteger next = new java.util.concurrent.atomic.AtomicInteger();
 
-        Writers(String prefix, boolean nodes) {
-            this.prefix = prefix;
-            this.nodes = nodes;
+        int number(String key) {
+            return numbers.computeIfAbsent(key, k -> next.getAndIncrement());
         }
 
-        List<String> names() {
+        void header(int number, String header) {
+            headers.putIfAbsent(number, header);
+        }
+
+        int count() {
+            return next.get();
+        }
+
+        /** Writes the header files and lists, per layout, its header and then its parts. */
+        List<String> finish(String kind, String prefix, Path directory, List<Writers> workers) {
+            List<String> names = new ArrayList<>();
+            for (int number = 0; number < next.get(); number++) {
+                String header = prefix + kind + "-h" + number + ".csv";
+                try {
+                    Files.writeString(directory.resolve(header), headers.get(number), StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+                names.add(header);
+                for (Writers worker : workers) {
+                    if (worker.wrote(number)) {
+                        names.add(worker.partName(prefix, number));
+                    }
+                }
+            }
             return names;
+        }
+    }
+
+    /** The CSV files of one worker for one kind of entity, opened when the first row for them arrives. */
+    private final class Writers {
+
+        private final String kind;
+        private final int worker;
+        private final boolean nodes;
+        private final Layouts layouts;
+        private final Map<String, Integer> numbers = new HashMap<>();
+        private final Map<Integer, List<String>> columns = new HashMap<>();
+        private final java.util.Set<Integer> created = new java.util.HashSet<>();
+        /** Access order: the first entry is the file that was used longest ago. */
+        private final java.util.LinkedHashMap<Integer, BufferedWriter> open = new java.util.LinkedHashMap<>(16, 0.75f, true);
+
+        Writers(String kind, int worker, boolean nodes, Layouts layouts) {
+            this.kind = kind;
+            this.worker = worker;
+            this.nodes = nodes;
+            this.layouts = layouts;
+        }
+
+        boolean wrote(int number) {
+            return created.contains(number);
+        }
+
+        String partName(String prefix, int number) {
+            return prefix + kind + "-p" + number + "-w" + worker + ".csv";
         }
 
         void write(String groupKey, GroupPlan plan, Map<String, ValueCodec.Encoded> cells, Object... leading) {
@@ -476,34 +541,14 @@ public final class CsvExporter {
                 variant.append(key).append('=').append(encoded == null ? "-" : encoded.type()).append('\u0001');
             }
             String fileKey = variant.toString();
-            BufferedWriter writer = writers.get(fileKey);
-            List<String> header = columns.get(fileKey);
+            Integer known = numbers.get(fileKey);
+            int number = known != null ? known : numbers.computeIfAbsent(fileKey, layouts::number);
             try {
+                BufferedWriter writer = open.get(number);
                 if (writer == null) {
-                    if (writers.size() >= MAX_OPEN_FILES) {
-                        throw new BuildException("The selection needs more than " + MAX_OPEN_FILES + " different CSV layouts "
-                                + "(label sets or property type combinations). Split it into smaller selections.");
-                    }
-                    String name = prefix + "-" + names.size() + ".csv";
-                    names.add(name);
-                    writer = Files.newBufferedWriter(directory.resolve(name), StandardCharsets.UTF_8);
-                    writers.put(fileKey, writer);
-                    header = new ArrayList<>(plan.plainKeys());
-                    for (String key : conflicts) {
-                        if (cells.containsKey(key)) {
-                            header.add(key);
-                        }
-                    }
-                    columns.put(fileKey, header);
-                    writer.write(nodes ? ":ID,:LABEL" : ":START_ID,:END_ID,:TYPE");
-                    for (String key : header) {
-                        ValueCodec.Encoded encoded = cells.get(key);
-                        String type = conflicts.contains(key) ? encoded.type() : plan.plainType(key);
-                        writer.write(',');
-                        writer.write(escape(key + ":" + type));
-                    }
-                    writer.write('\n');
+                    writer = openFile(number, plan, conflicts, cells);
                 }
+                List<String> header = columns.get(number);
                 for (int i = 0; i < leading.length; i++) {
                     if (i > 0) {
                         writer.write(',');
@@ -525,8 +570,8 @@ public final class CsvExporter {
                     }
                 }
                 if (present != cells.size()) {
-                    List<String> known = header;
-                    String unknown = cells.keySet().stream().filter(key -> !known.contains(key)).findFirst().orElse("?");
+                    List<String> known2 = header;
+                    String unknown = cells.keySet().stream().filter(key -> !known2.contains(key)).findFirst().orElse("?");
                     throw new BuildException("The source changed while it was being exported: a new property '" + unknown
                             + "' appeared. Run the split again.");
                 }
@@ -536,14 +581,49 @@ public final class CsvExporter {
             }
         }
 
+        /** Opens the part of a layout: new the first time, for appending when it was closed to keep the open files few. */
+        private BufferedWriter openFile(int number, GroupPlan plan, List<String> conflicts, Map<String, ValueCodec.Encoded> cells)
+                throws IOException {
+            Path file = directory.resolve(partName(filePrefix, number));
+            BufferedWriter writer;
+            if (created.add(number)) {
+                writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8);
+                List<String> header = new ArrayList<>(plan.plainKeys());
+                for (String key : conflicts) {
+                    if (cells.containsKey(key)) {
+                        header.add(key);
+                    }
+                }
+                columns.put(number, header);
+                StringBuilder line = new StringBuilder(nodes ? ":ID,:LABEL" : ":START_ID,:END_ID,:TYPE");
+                for (String key : header) {
+                    ValueCodec.Encoded encoded = cells.get(key);
+                    String type = conflicts.contains(key) ? encoded.type() : plan.plainType(key);
+                    line.append(',').append(escape(key + ":" + type));
+                }
+                layouts.header(number, line.append('\n').toString());
+            } else {
+                writer = Files.newBufferedWriter(file, StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.APPEND);
+            }
+            open.put(number, writer);
+            if (open.size() > MAX_OPEN_FILES) {
+                java.util.Iterator<Map.Entry<Integer, BufferedWriter>> oldest = open.entrySet().iterator();
+                Map.Entry<Integer, BufferedWriter> eldest = oldest.next();
+                oldest.remove();
+                eldest.getValue().close();
+            }
+            return writer;
+        }
+
         void closeQuietly() {
-            for (BufferedWriter writer : writers.values()) {
+            for (BufferedWriter writer : open.values()) {
                 try {
                     writer.close();
                 } catch (IOException ignored) {
                     // the export is already failing or finished
                 }
             }
+            open.clear();
         }
     }
 

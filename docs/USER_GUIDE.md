@@ -355,6 +355,13 @@ record files because Neo4j opens them for writing. Details and measurements: `do
 
 Settings are stored in MySQL and apply to the next job. You can also change your password and turn two-factor sign-in on or off for your own account on this page (see section 8).
 
+### While a job runs
+
+Every button that starts something shows a spinner and cannot be pressed twice. Links and forms that take long (Schema, Check, Reload) put a "please wait" screen over the page.
+A migration that is working shows a progress card: the phase, a bar with `done / total` and a percentage when the phase has a count, a moving bar when it has none, plus elapsed time, speed and the time left.
+The log under it updates by itself every two seconds; when the job ends the page reloads to show the result.
+**Copy log** (on a migration, on Logs → Jobs and on Logs → What people did) puts the text on your clipboard, one line per row.
+
 ## 8. Logs and users
 
 - **Logs → Jobs**: everything a plan or dry run printed, including the commands used to load dumps.
@@ -443,6 +450,10 @@ Selection file:
 Unknown keys are rejected so that a typo cannot silently select everything.
 
 ## 11. Troubleshooting
+
+A run is not limited by how many different shapes of data it has. Nodes with many different label sets, or the same property stored as a number on some nodes and as text on others, each get their own CSV layout.
+The writer keeps at most 128 files open per worker and reopens them when needed, writes one header file per layout and one headerless part file per worker, and the import is given one argument per layout
+(`--nodes=…-h3.csv,…-p3-w[0-9]+\.csv`), so the command stays short however many layouts there are (tested with 700 layouts against a real server).
 
 | You see | Cause and fix |
 |---|---|

@@ -3,6 +3,8 @@ package com.etolv.neo4jtool.engine.instance;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * CSV files for {@code neo4j-admin database import full --id-type=actual}, in one directory.
@@ -32,8 +34,30 @@ public record ImportFiles(Path directory, List<String> nodeFiles, List<String> r
         if (files.maxMemory() != null && !files.maxMemory().isBlank()) {
             args.add("--max-off-heap-memory=" + files.maxMemory());
         }
-        files.nodeFiles().forEach(file -> args.add("--nodes=" + directoryPrefix + file));
-        files.relationshipFiles().forEach(file -> args.add("--relationships=" + directoryPrefix + file));
+        groups(files.nodeFiles(), directoryPrefix).forEach(group -> args.add("--nodes=" + group));
+        groups(files.relationshipFiles(), directoryPrefix).forEach(group -> args.add("--relationships=" + group));
         return args;
+    }
+
+    private static final Pattern HEADER = Pattern.compile("(.*-)h(\\d+)\\.csv");
+    private static final Pattern PART = Pattern.compile(".*-p\\d+-w\\d+\\.csv");
+
+    /**
+     * One import argument per layout. The export writes the header of a layout in {@code <prefix>-h<n>.csv} and its rows,
+     * one file per worker, in {@code <prefix>-p<n>-w<worker>.csv}; the importer reads files that match a regular expression
+     * as one, so the number of arguments is the number of layouts, not that number times the workers (a command line
+     * can only be so long). A file that is neither a header nor a part is passed as it is.
+     */
+    static List<String> groups(List<String> files, String directoryPrefix) {
+        List<String> groups = new ArrayList<>();
+        for (String file : files) {
+            Matcher header = HEADER.matcher(file);
+            if (header.matches()) {
+                groups.add(directoryPrefix + file + "," + directoryPrefix + header.group(1) + "p" + header.group(2) + "-w[0-9]+\\.csv");
+            } else if (!PART.matcher(file).matches()) {
+                groups.add(directoryPrefix + file);
+            }
+        }
+        return groups;
     }
 }

@@ -256,8 +256,10 @@ class FastReaderIT {
         List<String> rows = new ArrayList<>();
         for (String file : files) {
             List<String> lines = Files.readAllLines(dir.resolve(file));
-            // multi-line text fields break lines, so join physical lines into records by the header-less content only
-            rows.addAll(lines.subList(1, lines.size()));
+            // a header file (-h<n>.csv) holds only the header; the parts (-p<n>-w<worker>.csv) hold only rows
+            if (!file.matches(".*-h\\d+\\.csv")) {
+                rows.addAll(lines);
+            }
         }
         Collections.sort(rows);
         return rows;

@@ -133,3 +133,25 @@ pre, .log { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 }
 .actions { flex-wrap: nowrap; white-space: nowrap; }
 td .actions { justify-content: flex-end; }
+
+/* loaders */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; margin-right: 8px; }
+.spinner.big { width: 34px; height: 34px; border-width: 3px; margin: 0 0 10px; color: var(--accent); }
+button.loading, .btn.loading { opacity: .75; cursor: progress; pointer-events: none; }
+button.loading::before, .btn.loading::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 8px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -1px; }
+.busy-overlay { position: fixed; inset: 0; background: rgba(8, 12, 18, .62); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.busy-overlay[hidden] { display: none; }
+.busy-box { background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 12px; padding: 26px 30px; max-width: 460px; text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+.busy-box p { margin: 4px 0; }
+
+/* job progress */
+.progress-card { border-left: 4px solid var(--accent); }
+.progress-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.progress-head .spinner { color: var(--accent); margin-right: 0; }
+.progress-card .phase { font-weight: 550; margin: 2px 0 8px; }
+.bar { height: 14px; border-radius: 999px; background: var(--neutral-bg); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width .6s ease; }
+.bar.indeterminate > i { width: 35%; animation: slide 1.3s ease-in-out infinite; }
+@keyframes slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+.progress-card .numbers { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 16px; font-variant-numeric: tabular-nums; }

@@ -15,8 +15,8 @@
                 <td class="mono" th:text="${e.location()}"></td>
                 <td th:text="${e.database()}"></td>
                 <td><div class="actions">
-                    <a class="btn secondary" th:href="@{/endpoints/{id}/schema(id=${e.id()})}">Schema</a>
-                    <form class="inline" th:action="@{/endpoints/{id}/check(id=${e.id()})}" method="post"><button class="secondary" type="submit">Check</button></form>
+                    <a class="btn secondary" data-loader="Reading the schema. A dump is loaded into a temporary server first, which takes a few minutes for a big one." th:href="@{/endpoints/{id}/schema(id=${e.id()})}">Schema</a>
+                    <form class="inline" data-loader="Checking the database." th:action="@{/endpoints/{id}/check(id=${e.id()})}" method="post"><button class="secondary" type="submit">Check</button></form>
                     <form class="inline" th:action="@{/endpoints/{id}/delete(id=${e.id()})}" method="post"><button class="danger" type="submit">Delete</button></form>
                 </div></td>
             </tr>

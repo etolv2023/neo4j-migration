@@ -6,7 +6,7 @@
         <p class="sub"><span th:text="${endpoint.kind().label()}"></span> · <span class="mono" th:text="${endpoint.location()}"></span></p></div>
         <a class="btn secondary" th:href="@{/endpoints}">Back</a></div>
     <p class="flash work" th:if="${endpoint.kind().name() != 'LIVE'}">This database is not served by a running server, so a temporary one was started to read it. For a big dump that takes a while.</p>
-    <form class="card" method="get">
+    <form class="card" method="get" data-loader="Reading the schema. A dump is loaded into a temporary server first, which takes a few minutes for a big one.">
         <div class="row">
             <div><label for="orgProperty">Organisation property</label><input id="orgProperty" name="orgProperty" type="text" th:value="${orgProperty}"></div>
             <div><label class="check" style="margin-top:34px"><input type="checkbox" name="orgBreakdown" value="true" th:checked="${orgBreakdown}"> Count per organisation</label>

@@ -98,7 +98,7 @@ public class MigrationsController {
         model.addAttribute("targetKind", migration.targetId() == null ? null
                 : endpoints.find(migration.targetId()).map(e -> e.kind().name()).orElse(null));
         if (migration.state().busy()) {
-            model.addAttribute("refresh", 3);
+            model.addAttribute("refresh", 15);   // a fallback: the page fetches itself every 2 seconds while it runs
         }
         return "migration";
     }

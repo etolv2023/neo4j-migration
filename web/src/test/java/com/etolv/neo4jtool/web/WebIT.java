@@ -306,7 +306,10 @@ class WebIT {
                 .andExpect(flash().attribute("error", containsString("already working")));
         mvc.perform(post("/migrations/" + id + "/delete").with(ADMIN).with(csrf()))
                 .andExpect(flash().attribute("error", containsString("working right now")));
-        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(content().string(containsString("http-equiv=\"refresh\"")));
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(content().string(containsString("http-equiv=\"refresh\"")))
+                .andExpect(content().string(containsString("id=\"job-progress\"")))
+                .andExpect(content().string(containsString("data-copy=\"#job-log\"")));
+        mvc.perform(get("/migrations").with(ADMIN)).andExpect(content().string(containsString("busy-overlay")));
         assertThat(migrations.find(id)).isPresent();
 
         assertThat(migrations.failInterrupted()).isEqualTo(1);        // what a restart does
