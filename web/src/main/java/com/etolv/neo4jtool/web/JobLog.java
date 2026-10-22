@@ -48,6 +48,28 @@ public class JobLog {
         return latest.reversed();
     }
 
+    /** The messages that mark where a run (a plan, a dry run, a run, a rollback) begins in the log of a migration. */
+    private static final String STARTS = "('Planning started', 'Dry run started', 'Run started', 'Rollback started')";
+
+    /** The id of the line that began the latest run of a scope, or 0 when there is none. */
+    public long lastRunStart(String scope) {
+        return jdbc.sql("SELECT COALESCE(MAX(id), 0) FROM job_logs WHERE scope = ? AND message IN " + STARTS)
+                .param(scope).query(Long.class).single();
+    }
+
+    /** The last {@code limit} lines from the line with id {@code fromId} on, oldest first. */
+    public List<Line> from(String scope, long fromId, int limit) {
+        List<Line> latest = jdbc.sql("SELECT * FROM job_logs WHERE scope = ? AND id >= ? ORDER BY id DESC LIMIT ?")
+                .params(scope, fromId, limit).query(JobLog::map).list();
+        return latest.reversed();
+    }
+
+    /** The lines after the one with id {@code afterId}, oldest first. */
+    public List<Line> after(String scope, long afterId, int limit) {
+        return jdbc.sql("SELECT * FROM job_logs WHERE scope = ? AND id > ? ORDER BY id ASC LIMIT ?")
+                .params(scope, afterId, limit).query(JobLog::map).list();
+    }
+
     /** Newest first. */
     public List<Line> latest(int limit) {
         return jdbc.sql("SELECT * FROM job_logs ORDER BY id DESC LIMIT ?").param(limit).query(JobLog::map).list();

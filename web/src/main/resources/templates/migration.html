@@ -20,40 +20,26 @@
         <div th:class="${'s ' + (result != null ? 'done' : (dryRun != null ? 'now' : 'off'))}"><b>4</b><span>Run</span></div>
     </div>
 
-    <div class="card progress-card" id="job-progress" th:if="${migration.state().busy()}">
-        <div class="progress-head">
-            <span class="spinner"></span><b th:text="${migration.state().label()}"></b>
-            <span class="muted" th:if="${progress != null}" th:text="'running for ' + ${@fmt.duration(progress.elapsedSeconds())}"></span>
-        </div>
-        <div class="phase" th:text="${progress != null ? progress.phase() : 'Starting'}"></div>
-        <div th:class="${'bar' + (progress == null || progress.percent() < 0 ? ' indeterminate' : '')}"><i th:style="${progress != null && progress.percent() >= 0} ? 'width:' + ${progress.percent()} + '%'"></i></div>
-        <div class="numbers" th:if="${progress != null && progress.total() >= 0}">
-            <b th:text="${progress.percent()} + '%'"></b>
-            <span th:text="${@fmt.number(progress.done()) + ' of ' + @fmt.number(progress.total())}"></span>
-            <span th:if="${progress.perSecond() >= 0}" th:text="${@fmt.number(progress.perSecond()) + ' per second'}"></span>
-            <span th:if="${progress.etaSeconds() >= 0}" th:text="'about ' + ${@fmt.duration(progress.etaSeconds())} + ' left in this step'"></span>
-        </div>
-        <div class="numbers muted" th:if="${progress != null && progress.total() < 0 && progress.phaseSeconds() > 0}"
-             th:text="'this step has taken ' + ${@fmt.duration(progress.phaseSeconds())} + ' so far'"></div>
-        <p class="hint">This page updates by itself. You can close it; the job keeps running.</p>
-    </div>
+    <!-- filled and kept up to date by live.js -->
+    <div class="card progress-card" id="job-progress" hidden></div>
     <div class="flash err" th:if="${migration.lastError() != null}">
         <b>The last step failed.</b> <span th:text="${migration.lastError()}"></span>
     </div>
 
-    <div class="card">
-        <h2>Selection</h2>
+    <details class="card selection">
+        <summary><h2>Selection</h2></summary>
         <pre th:text="${migration.selectionYaml()}"></pre>
-    </div>
+    </details>
 
     <!-- Plan -->
     <div class="card">
         <div class="head" style="margin-bottom:8px">
-            <h2>Plan</h2>
+            <h2>Plan <span class="count" data-count="plan"></span></h2>
             <form th:action="@{/migrations/{id}/plan(id=${migration.id()})}" method="post">
                 <button type="submit" th:disabled="${migration.state().busy()}" th:text="${plan == null} ? 'Make the plan' : 'Make it again'"></button></form>
         </div>
         <p class="sub" th:if="${plan == null}">Counts what is in both databases and lists the steps. Dumps and stopped data directories are loaded into a temporary server first. Nothing is changed.</p>
+        <ol class="tl" data-steps="plan"></ol>
         <th:block th:if="${plan != null}">
             <div class="stats">
                 <div class="stat"><div class="l">Selected nodes</div><div class="big" th:text="${@fmt.number(plan.selectedNodes())}"></div></div>
@@ -66,7 +52,7 @@
                 connected to a selected node:
                 <span th:each="l, it : ${plan.neighbourLabels()}"><span class="mono" th:text="${l.label()}"></span> <span th:text="${@fmt.number(l.count())}"></span><span th:if="${!it.last}">, </span></span>.</p>
             <div class="flash warn" style="margin-top:14px" th:each="w : ${plan.warnings()}" th:text="${w}"></div>
-            <table class="kv" style="margin-top:10px">
+            <table class="kv cmp" style="margin-top:10px">
                 <thead><tr><th></th><th>From</th><th th:if="${plan.to() != null}">To</th></tr></thead>
                 <tbody>
                 <tr><td>Name</td><td th:text="${plan.from().name()}"></td><td th:if="${plan.to() != null}" th:text="${plan.to().name()}"></td></tr>
@@ -81,7 +67,8 @@
                 <li th:each="s : ${plan.steps()}">
                     <span class="n" th:text="${s.number()}"></span>
                     <div><div th:text="${s.title()}"></div><div class="d" th:text="${s.detail()}"></div></div>
-                    <span th:class="${s.available() ? 'badge ok' : 'badge'}" th:text="${s.available() ? 'available' : 'not available yet'}"></span>
+                    <span th:class="${s.available() ? 'chip ok' : 'chip'}" th:title="${s.available() ? 'available' : 'not available yet'}"
+                          th:text="${s.available() ? '&#10003;' : '&middot;'}"></span>
                 </li>
             </ol>
             <p class="hint">Plan made <span th:text="${@fmt.time(T(java.time.Instant).parse(plan.createdAt()))}"></span>. The time is a rough estimate from a test run, not a promise.</p>
@@ -91,11 +78,12 @@
     <!-- Dry run -->
     <div class="card">
         <div class="head" style="margin-bottom:8px">
-            <h2>Dry run</h2>
+            <h2>Dry run <span class="count" data-count="dry_run"></span></h2>
             <form th:action="@{/migrations/{id}/dry-run(id=${migration.id()})}" method="post">
                 <button type="submit" th:disabled="${plan == null || migration.state().busy()}" th:text="${dryRun == null} ? 'Run the dry run' : 'Run it again'"></button></form>
         </div>
         <p class="sub" th:if="${plan == null}">Make the plan first.</p>
+        <ol class="tl" data-steps="dry_run"></ol>
         <p class="sub" th:if="${plan != null && dryRun == null}">Compares the selected nodes with the target, id by id, and checks their relationships. Nothing is changed.</p>
         <th:block th:if="${dryRun != null}">
             <p><span th:class="${'badge ' + dryRun.gate()}" th:text="${dryRun.gate()}"></span>
@@ -113,12 +101,13 @@
     <!-- Run -->
     <div class="card">
         <div class="head" style="margin-bottom:8px">
-            <h2>Run <span class="badge" title="Not yet checked on a copy of your real database">experimental</span></h2>
+            <h2>Run <span class="badge" title="Not yet checked on a copy of your real database">experimental</span> <span class="count" data-count="run"></span></h2>
             <form th:action="@{/migrations/{id}/run(id=${migration.id()})}" method="post">
                 <button type="submit" th:disabled="${dryRun == null || dryRun.gate() == 'BLOCKED' || migration.state().busy() || targetKind == 'LIVE'}"
                         th:text="${migration.isSplit()} ? (${result == null} ? 'Run the split' : 'Run it again') : (${merge == null} ? 'Run the merge' : 'Run it again')"></button></form>
         </div>
         <p class="sub" th:if="${dryRun == null}">Run the dry run first.</p>
+        <ol class="tl" data-steps="run"></ol>
         <p class="sub" th:if="${dryRun != null && dryRun.gate() == 'BLOCKED'}">The dry run is blocked. Fix what it reports and run it again.</p>
         <p class="sub" th:if="${!migration.isSplit() && targetKind == 'LIVE'}">A running server cannot be merged into
             (Neo4j Community cannot write nodes with chosen ids into a running database). Stop the server, add its data directory (or a dump of it)
@@ -183,12 +172,17 @@
         </th:block>
     </div>
 
-    <!-- Log -->
+    <!-- Log: the latest run only (the Logs page has all of them) -->
     <div class="card">
         <div class="head" style="margin-bottom:8px"><h2>Log</h2>
-            <button type="button" class="secondary" data-copy="#job-log">Copy log</button></div>
-        <p class="muted" th:if="${log.isEmpty() && !migration.state().busy()}">Nothing has run yet.</p>
-        <div class="log" id="job-log" th:style="${log.isEmpty() ? 'display:none' : null}"><div th:each="l : ${log}" th:class="${l.level()}"><span class="t" th:text="${@fmt.time(l.at())}"></span><span th:text="${l.message()}"></span></div></div>
+            <div class="actions">
+                <label class="check log-switch"><input type="checkbox" id="log-important"> Important only</label>
+                <button type="button" class="secondary" data-copy="#job-log">Copy log</button>
+            </div></div>
+        <p class="muted" id="job-log-empty" th:if="${log.isEmpty()}">Nothing has run yet.</p>
+        <div class="log" id="job-log" th:attr="data-from=${logFrom}, data-after=${logAfter}" th:style="${log.isEmpty() ? 'display:none' : null}"><div th:each="l : ${log}"
+             th:class="${T(com.etolv.neo4jtool.web.LogView).cls(l) + (T(com.etolv.neo4jtool.web.LogView).important(l) ? ' imp' : '')}"
+             th:attr="data-id=${l.id()}"><span class="t" th:text="${T(com.etolv.neo4jtool.web.LogView).time(l.at())}"></span><span th:text="${l.message()}"></span></div></div>
     </div>
 </main>
 </body>

@@ -89,6 +89,9 @@ public class MigrationJobs {
     // As many at a time as the settings say (two by default): each job may start throw-away servers and hold selected ids.
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(2, 2, 60, TimeUnit.SECONDS, new LinkedBlockingQueue<>());
     private final Map<Long, Progress> running = new ConcurrentHashMap<>();
+    // What the running job has reported, for the list of steps; and the same for the last job that failed, to show where.
+    private final Map<Long, JobTimeline> timelines = new ConcurrentHashMap<>();
+    private final Map<Long, JobTimeline> failedTimelines = new ConcurrentHashMap<>();
 
     public MigrationJobs(MigrationStore migrations, EndpointStore endpoints, EndpointService endpointService,
                          SettingsStore settings, ReportStore reports, Planner planner, JobLog jobLog, AuditLog audit) {
@@ -119,6 +122,44 @@ public class MigrationJobs {
         return running.get(migrationId);
     }
 
+    /** What the running job of a migration has reported, or null when none runs. */
+    JobTimeline timeline(long migrationId) {
+        return timelines.get(migrationId);
+    }
+
+    /** What the last job of a migration that failed had reported, or null. */
+    JobTimeline failedTimeline(long migrationId) {
+        return failedTimelines.get(migrationId);
+    }
+
+    private void begin(long migrationId, JobTimeline.Stage stage) {
+        failedTimelines.remove(migrationId);
+        timelines.put(migrationId, new JobTimeline(stage));
+        running.put(migrationId, new Progress("Queued", 0, -1));
+    }
+
+    /** Moves a running job to a new step; the time the whole job began is kept. */
+    private void enter(long migrationId, String name) {
+        Progress before = running.get(migrationId);
+        long jobStarted = before == null ? System.currentTimeMillis() : before.jobStartedMillis();
+        running.put(migrationId, new Progress(name, 0, -1, System.currentTimeMillis(), jobStarted, 1));
+        JobTimeline timeline = timelines.get(migrationId);
+        if (timeline != null) {
+            timeline.mark(name);
+        }
+    }
+
+    /** What the job prints, made readable (see {@link LogFilter}) and kept in its log. */
+    private Consumer<String> sink(Migration migration) {
+        JobTimeline timeline = timelines.get(migration.id());
+        return new LogFilter(jobLog.sink(migration.scope()), timeline == null ? new ImportWatch() : timeline.importWatch());
+    }
+
+    private void finish(long migrationId) {
+        running.remove(migrationId);
+        timelines.remove(migrationId);
+    }
+
     /** Queues a job; the number of jobs that run at the same time follows the settings as they are now. */
     private void submit(Runnable job) {
         AppSettings current = settings.get();
@@ -145,7 +186,7 @@ public class MigrationJobs {
         migrations.start(migration.id(), Migration.State.PLANNING);
         jobLog.add(migration.scope(), "INFO", "Planning started");
         audit.record("plan_start", "#" + migration.id() + " " + migration.name());
-        running.put(migration.id(), new Progress("Queued", 0, -1));
+        begin(migration.id(), JobTimeline.Stage.PLAN);
         submit(() -> runPlan(migration));
     }
 
@@ -157,7 +198,7 @@ public class MigrationJobs {
         migrations.start(migration.id(), Migration.State.DRY_RUNNING);
         jobLog.add(migration.scope(), "INFO", "Dry run started");
         audit.record("dry_run_start", "#" + migration.id() + " " + migration.name());
-        running.put(migration.id(), new Progress("Queued", 0, -1));
+        begin(migration.id(), JobTimeline.Stage.DRY_RUN);
         submit(() -> runDryRun(migration));
     }
 
@@ -192,7 +233,7 @@ public class MigrationJobs {
         migrations.start(migration.id(), Migration.State.RUNNING);
         jobLog.add(migration.scope(), "INFO", "Run started");
         audit.record("run_start", "#" + migration.id() + " " + migration.name());
-        running.put(migration.id(), new Progress("Queued", 0, -1));
+        begin(migration.id(), JobTimeline.Stage.RUN);
         submit(() -> {
             if (migration.isSplit()) {
                 runSplit(migration);
@@ -235,22 +276,22 @@ public class MigrationJobs {
     }
 
     private void runPlan(Migration migration) {
-        Consumer<String> out = jobLog.sink(migration.scope());
+        Consumer<String> out = sink(migration);
         try {
             Endpoint source = endpoints.find(migration.sourceId())
                     .orElseThrow(() -> new IllegalStateException("The source '" + migration.sourceName() + "' was deleted"));
             Endpoint target = migration.targetId() == null ? null : endpoints.find(migration.targetId())
                     .orElseThrow(() -> new IllegalStateException("The target '" + migration.targetName() + "' was deleted"));
             SelectionConfig selection = SelectionConfigParser.parse(migration.selectionYaml());
-            running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
+            enter(migration.id(), "Opening '" + source.name() + "'");
             try (Opened from = endpointService.open(source, out)) {
                 Opened to = null;
                 try {
                     if (target != null) {
-                        running.put(migration.id(), new Progress("Opening '" + target.name() + "'", 0, -1));
+                        enter(migration.id(), "Opening '" + target.name() + "'");
                         to = endpointService.open(target, out);
                     }
-                    running.put(migration.id(), new Progress("Counting", 0, -1));
+                    enter(migration.id(), "Counting");
                     MigrationPlan plan = planner.plan(source, from.client(), target, to == null ? null : to.client(), selection);
                     migrations.planned(migration.id(), Json.write(plan));
                 } finally {
@@ -264,12 +305,12 @@ public class MigrationJobs {
         } catch (Throwable e) {
             fail(migration, Migration.State.DRAFT, "Planning", e);
         } finally {
-            running.remove(migration.id());
+            finish(migration.id());
         }
     }
 
     private void runDryRun(Migration migration) {
-        Consumer<String> out = jobLog.sink(migration.scope());
+        Consumer<String> out = sink(migration);
         long reportId = -1;
         try {
             Endpoint source = endpoints.find(migration.sourceId())
@@ -281,16 +322,16 @@ public class MigrationJobs {
             DryRunOptions options = new DryRunOptions(current.batchSize(), current.sampleSize(), current.analyseRelationships());
             reportId = reports.begin(migration.id(), migration.sourceName(), migration.targetName(), migration.selectionYaml(), options);
 
-            running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
+            enter(migration.id(), "Opening '" + source.name() + "'");
             DryRunReport report;
             try (Opened from = endpointService.open(source, out)) {
                 Opened to = null;
                 try {
                     if (target != null) {
-                        running.put(migration.id(), new Progress("Opening '" + target.name() + "'", 0, -1));
+                        enter(migration.id(), "Opening '" + target.name() + "'");
                         to = endpointService.open(target, out);
                     }
-                    report = dryRunService.run(from.client(), to == null ? null : to.client(), selection, options, progress(migration.id(), out));
+                    report = dryRunService.run(from.client(), to == null ? null : to.client(), selection, options, progress(migration, out));
                 } finally {
                     if (to != null) {
                         to.close();
@@ -307,12 +348,12 @@ public class MigrationJobs {
             }
             fail(migration, Migration.State.PLANNED, "Dry run", e);
         } finally {
-            running.remove(migration.id());
+            finish(migration.id());
         }
     }
 
     private void runSplit(Migration migration) {
-        Consumer<String> out = jobLog.sink(migration.scope());
+        Consumer<String> out = sink(migration);
         try {
             Endpoint source = endpoints.find(migration.sourceId())
                     .orElseThrow(() -> new IllegalStateException("The source '" + migration.sourceName() + "' was deleted"));
@@ -320,11 +361,11 @@ public class MigrationJobs {
             AppSettings current = settings.get();
             Path output = Path.of(current.outputDir(), fileName(migration, !current.splitAsDirectory()));
             BuildOptions options = buildOptions(current).withDirectoryOutput(current.splitAsDirectory());
-            running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
+            enter(migration.id(), "Opening '" + source.name() + "'");
             SplitResult result;
             try (Opened from = endpointService.open(source, out)) {
                 result = splitService.run(from.client(), from.fast(), selection, InstanceRunners.create(current.instanceSettings()),
-                        Path.of(current.workDir()), output, options, progress(migration.id(), out), out);
+                        Path.of(current.workDir()), output, options, progress(migration, out), out);
             }
             migrations.ran(migration.id(), Json.write(result));
             jobLog.add(migration.scope(), "INFO", "Run finished: " + result.outputFile());
@@ -332,12 +373,12 @@ public class MigrationJobs {
         } catch (Throwable e) {
             fail(migration, Migration.State.DRY_RUN_DONE, "Run", e);
         } finally {
-            running.remove(migration.id());
+            finish(migration.id());
         }
     }
 
     private void runMerge(Migration migration) {
-        Consumer<String> out = jobLog.sink(migration.scope());
+        Consumer<String> out = sink(migration);
         try {
             Endpoint source = endpoints.find(migration.sourceId())
                     .orElseThrow(() -> new IllegalStateException("The source '" + migration.sourceName() + "' was deleted"));
@@ -350,12 +391,12 @@ public class MigrationJobs {
                     : MergeTarget.dump(Path.of(target.path()), target.database());
             Path output = Path.of(current.outputDir(), fileName(migration, true));
             MergeOptions options = new MergeOptions(buildOptions(current), current.mergeSwap());
-            running.put(migration.id(), new Progress("Opening '" + source.name() + "'", 0, -1));
+            enter(migration.id(), "Opening '" + source.name() + "'");
             MergeResult result;
             try (Opened from = endpointService.open(source, out)) {
                 result = mergeService.run(from.client(), from.fast(), selection, mergeTarget,
                         InstanceRunners.create(current.instanceSettings()),
-                        Path.of(current.workDir()), Path.of(current.backupDir()), output, options, progress(migration.id(), out), out);
+                        Path.of(current.workDir()), Path.of(current.backupDir()), output, options, progress(migration, out), out);
             }
             migrations.ran(migration.id(), Json.write(result));
             jobLog.add(migration.scope(), "INFO", result.swapped()
@@ -365,7 +406,7 @@ public class MigrationJobs {
         } catch (Throwable e) {
             fail(migration, Migration.State.DRY_RUN_DONE, "Run", e);
         } finally {
-            running.remove(migration.id());
+            finish(migration.id());
         }
     }
 
@@ -375,7 +416,8 @@ public class MigrationJobs {
         return (slug.isEmpty() ? "split" : slug) + "-" + migration.id() + "-" + stamp + (dump ? ".dump" : "");
     }
 
-    private DryRunProgress progress(long migrationId, Consumer<String> out) {
+    private DryRunProgress progress(Migration migration, Consumer<String> out) {
+        long migrationId = migration.id();
         Progress before = running.get(migrationId);
         long jobStarted = before == null ? System.currentTimeMillis() : before.jobStartedMillis();
         return new DryRunProgress() {
@@ -390,7 +432,11 @@ public class MigrationJobs {
                 phaseStarted = System.currentTimeMillis();
                 phaseNumber++;
                 running.put(migrationId, new Progress(name, 0, -1, phaseStarted, jobStarted, phaseNumber));
-                out.accept(name);
+                JobTimeline timeline = timelines.get(migrationId);
+                if (timeline != null) {
+                    timeline.mark(name);
+                }
+                jobLog.add(migration.scope(), "STEP", name);
             }
 
             @Override
@@ -408,6 +454,11 @@ public class MigrationJobs {
     private void fail(Migration migration, Migration.State backTo, String what, Throwable e) {
         log.warn("{} of migration {} failed", what, migration.id(), e);
         String message = message(e);
+        JobTimeline timeline = timelines.get(migration.id());
+        if (timeline != null) {
+            timeline.end();
+            failedTimelines.put(migration.id(), timeline);
+        }
         migrations.failed(migration.id(), backTo, message);
         jobLog.add(migration.scope(), "ERROR", what + " failed: " + message);
         audit.record("system", what.toLowerCase().replace(' ', '_') + "_failed", "#" + migration.id());

@@ -32,6 +32,7 @@ import java.time.Duration;
  * @param maxJobs      migrations that may run at the same time
  * @param requireTwoFactor every user must sign in with a second factor; a user without one is sent to set it up after the password
  * @param sessionHours how long a sign-in stays valid without any activity
+ * @param liveSeconds  how often a page that shows a running job, and the resource bar, ask for news (seconds)
  */
 public record AppSettings(
         InstanceSettings.Runner runner,
@@ -62,7 +63,21 @@ public record AppSettings(
         int maxJobs,
         boolean splitAsDirectory,
         boolean requireTwoFactor,
-        int sessionHours) {
+        int sessionHours,
+        int liveSeconds) {
+
+    /** The settings as they were before the live refresh could be set: every 2 seconds. */
+    public AppSettings(InstanceSettings.Runner runner, String dockerImage, String neo4jHome, String workDir, String outputDir,
+                       String backupDir, boolean mergeSwap, boolean copySchema, boolean checkAfterBuild, String tempHeap,
+                       String tempPageCache, int startTimeoutMinutes, String orgProperty, boolean includeNeighbours, int batchSize,
+                       int sampleSize, boolean analyseRelationships, boolean fastReader, String readerLib, String readerHeap,
+                       String readerPageCache, int workers, int importThreads, String importMemory, int idSetMemoryMb, int maxJobs,
+                       boolean splitAsDirectory, boolean requireTwoFactor, int sessionHours) {
+        this(runner, dockerImage, neo4jHome, workDir, outputDir, backupDir, mergeSwap, copySchema, checkAfterBuild, tempHeap,
+                tempPageCache, startTimeoutMinutes, orgProperty, includeNeighbours, batchSize, sampleSize, analyseRelationships,
+                fastReader, readerLib, readerHeap, readerPageCache, workers, importThreads, importMemory, idSetMemoryMb, maxJobs,
+                splitAsDirectory, requireTwoFactor, sessionHours, 2);
+    }
 
     /** The settings as they were before the length of a sign-in could be set: 12 hours. */
     public AppSettings(InstanceSettings.Runner runner, String dockerImage, String neo4jHome, String workDir, String outputDir,

@@ -306,8 +306,12 @@ class WebIT {
                 .andExpect(flash().attribute("error", containsString("already working")));
         mvc.perform(post("/migrations/" + id + "/delete").with(ADMIN).with(csrf()))
                 .andExpect(flash().attribute("error", containsString("working right now")));
-        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(content().string(containsString("http-equiv=\"refresh\"")))
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(content().string(not(containsString("http-equiv=\"refresh\""))))
                 .andExpect(content().string(containsString("id=\"job-progress\"")))
+                .andExpect(content().string(containsString("data-busy=\"true\"")))
+                .andExpect(content().string(containsString("data-migration=\"" + id + "\"")))
+                .andExpect(content().string(containsString("data-steps=\"run\"")))
+                .andExpect(content().string(containsString("/live.js")))
                 .andExpect(content().string(containsString("data-copy=\"#job-log\"")));
         mvc.perform(get("/migrations").with(ADMIN)).andExpect(content().string(containsString("busy-overlay")));
         assertThat(migrations.find(id)).isPresent();
@@ -566,6 +570,97 @@ class WebIT {
             mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000", Map.of("sessionHours", "0"))
                     .with(ADMIN).with(csrf())).andExpect(flash().attribute("error", containsString("between 1 and 720")));
             assertThat(settings.get().sessionHours()).isEqualTo(30);
+        } finally {
+            settings.save(before);
+        }
+    }
+
+    @Test
+    @Order(23)
+    void theLiveFeedTellsWhereAJobIsAndGivesTheLinesOfTheLatestRunOnly() throws Exception {
+        long id = createMigration("live feed", "backup", "live", Map.of("orgIds", "1"));
+        String scope = "migration:" + id;
+        jobLog.add(scope, "INFO", "Dry run started");
+        jobLog.add(scope, "ERROR", "Dry run failed: an old problem");
+        jobLog.add(scope, "INFO", "Run started");
+        jobLog.add(scope, "STEP", "Backing up the target");
+        jobLog.add(scope, "INFO", "Backup: /somewhere/target.dump");
+
+        // the page shows the latest run only, the Logs page has the rest
+        mvc.perform(get("/migrations/" + id).with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(not(containsString("an old problem"))))
+                .andExpect(content().string(containsString("Backing up the target")))
+                .andExpect(content().string(containsString("class=\"STEP imp\"")));
+
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var first = mapper.readTree(mvc.perform(get("/live.json").param("migration", String.valueOf(id)).with(ADMIN))
+                .andExpect(status().isOk()).andExpect(content().contentTypeCompatibleWith("application/json"))
+                .andReturn().getResponse().getContentAsString());
+        assertThat(first.at("/job/busy").asBoolean()).isFalse();
+        assertThat(first.at("/job/log")).hasSize(3);
+        assertThat(first.at("/job/log/0/text").asText()).isEqualTo("Run started");
+        assertThat(first.at("/job/log/1/cls").asText()).isEqualTo("STEP");
+        assertThat(first.at("/job/steps/run").size()).isGreaterThan(8);
+        assertThat(first.at("/job/steps/run/0/state").asText()).isEqualTo("WAITING");
+        assertThat(first.at("/job/steps/plan/0/title").asText()).isEqualTo("Open the source");
+        assertThat(first.at("/interval_seconds").asInt()).isEqualTo(2);
+        assertThat(first.at("/resources/disk_total").asLong()).isPositive();
+
+        // only what came after the last line the page has
+        long last = first.at("/job/last_log_id").asLong();
+        jobLog.add(scope, "INFO", "something later");
+        var next = mapper.readTree(mvc.perform(get("/live.json").param("migration", String.valueOf(id)).param("after", String.valueOf(last))
+                .with(ADMIN)).andReturn().getResponse().getContentAsString());
+        assertThat(next.at("/job/log")).hasSize(1);
+        assertThat(next.at("/job/log/0/text").asText()).isEqualTo("something later");
+        assertThat(next.at("/job/log_from").asLong()).isEqualTo(first.at("/job/log_from").asLong());
+
+        // a new run: the page is told to start its log again
+        jobLog.add(scope, "INFO", "Run started");
+        var again = mapper.readTree(mvc.perform(get("/live.json").param("migration", String.valueOf(id)).param("after", String.valueOf(last))
+                .with(ADMIN)).andReturn().getResponse().getContentAsString());
+        assertThat(again.at("/job/log_from").asLong()).isGreaterThan(first.at("/job/log_from").asLong());
+        assertThat(again.at("/job/log/0/text").asText()).isEqualTo("Run started");
+
+        // the resources alone, for the pages that show no job
+        var alone = mapper.readTree(mvc.perform(get("/live.json").with(ADMIN)).andReturn().getResponse().getContentAsString());
+        assertThat(alone.at("/job").isNull()).isTrue();
+        assertThat(alone.at("/resources").isObject()).isTrue();
+
+        // nobody who is not signed in sees any of it
+        mvc.perform(get("/live.json")).andExpect(status().is3xxRedirection());
+        mvc.perform(get("/live/stream")).andExpect(status().is3xxRedirection());
+    }
+
+    @Test
+    @Order(23)
+    void theStreamPushesTheSameSnapshot() throws Exception {
+        long id = createMigration("live stream", "backup", "live", Map.of("orgIds", "1"));
+        var result = mvc.perform(get("/live/stream").param("migration", String.valueOf(id)).with(ADMIN))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncStarted()).andReturn();
+        String body = "";
+        for (int i = 0; i < 40 && !body.contains("data:"); i++) {
+            Thread.sleep(100);
+            body = result.getResponse().getContentAsString();
+        }
+        assertThat(body).contains("event:live").contains("\"steps\"").contains("\"resources\"");
+        assertThat(result.getResponse().getHeader("X-Accel-Buffering")).isEqualTo("no");
+        result.getRequest().getAsyncContext().complete();
+    }
+
+    @Test
+    @Order(24)
+    void theLiveRefreshIsASettingWithinLimits() throws Exception {
+        AppSettings before = settings.get();
+        try {
+            assertThat(before.liveSeconds()).isEqualTo(2);
+            mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000", Map.of("liveSeconds", "5"))
+                    .with(ADMIN).with(csrf()));
+            assertThat(settings.get().liveSeconds()).isEqualTo(5);
+            mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000", Map.of("liveSeconds", "0"))
+                    .with(ADMIN).with(csrf())).andExpect(flash().attribute("error", containsString("between 1 and 60")));
+            assertThat(settings.get().liveSeconds()).isEqualTo(5);
+            mvc.perform(get("/settings").with(ADMIN)).andExpect(content().string(containsString("Live refresh (seconds)")));
         } finally {
             settings.save(before);
         }

@@ -11,6 +11,13 @@ public class Fmt {
 
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    private static final String BUILD = Long.toString(System.currentTimeMillis(), 36);
+
+    /** Changes with every start of the dashboard, so a browser fetches the new css and script after an update. */
+    public String build() {
+        return BUILD;
+    }
+
     public String time(Instant instant) {
         return instant == null ? "" : TIME.format(instant.atZone(ZoneId.systemDefault()));
     }

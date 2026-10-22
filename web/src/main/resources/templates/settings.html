@@ -85,6 +85,10 @@
             <div><label for="sessionHours">Stay signed in for (hours)</label><input id="sessionHours" name="sessionHours" type="number" min="1" max="720" th:value="${settings.sessionHours()}"></div>
         </div>
         <p class="hint">How long you can leave the dashboard alone before you have to sign in again. It counts from your last click, and applies to the next sign-in.</p>
+        <div class="row">
+            <div><label for="liveSeconds">Live refresh (seconds)</label><input id="liveSeconds" name="liveSeconds" type="number" min="1" max="60" th:value="${settings.liveSeconds()}"></div>
+        </div>
+        <p class="hint">How often a running job and the resource bar at the top update themselves. Lower is more live, higher is lighter on a slow link.</p>
         <p><button type="submit">Save settings</button></p>
     </form>
 

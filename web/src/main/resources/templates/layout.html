@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" th:if="${refresh != null}" th:content="${refresh}">
     <title th:text="${title} + ' · Neo4j Migration'">Neo4j Migration</title>
-    <link rel="stylesheet" th:href="@{/app.css}">
+    <link rel="stylesheet" th:href="@{/app.css(v=${@fmt.build()})}">
+    <script th:src="@{/live.js(v=${@fmt.build()})}" defer></script>
 </head>
-<body>
+<body th:attr="data-live=@{/live}, data-migration=${liveMigration}, data-busy=${liveBusy}">
 <div class="shell">
     <aside class="side">
         <div class="brand">Neo4j Migration<small>ids kept</small></div>
@@ -24,6 +25,7 @@
         </div>
     </aside>
     <main class="content">
+        <div class="res" id="res" hidden aria-label="Resources of this machine"></div>
         <div class="flash ok" th:if="${message}" th:text="${message}"></div>
         <div class="flash err" th:if="${error}" th:text="${error}"></div>
         <th:block th:replace="${content}"></th:block>
@@ -97,26 +99,6 @@
             document.body.removeChild(area);
         }
     });
-
-    // a job page that is working fetches itself again every two seconds and swaps in the new progress and log
-    var progress = document.getElementById('job-progress');
-    if (progress) {
-        var timer = setInterval(function () {
-            fetch(window.location.href, { credentials: 'same-origin', cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (html) {
-                var next = new DOMParser().parseFromString(html, 'text/html');
-                var fresh = next.getElementById('job-progress');
-                if (!fresh) { clearInterval(timer); window.location.reload(); return; }
-                progress.innerHTML = fresh.innerHTML;
-                var log = document.getElementById('job-log'), freshLog = next.getElementById('job-log');
-                if (log && freshLog) {
-                    var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
-                    log.innerHTML = freshLog.innerHTML;
-                    log.style.display = freshLog.style.display;
-                    if (atBottom) { log.scrollTop = log.scrollHeight; }
-                }
-            }).catch(function () { /* the page refreshes by itself as a fallback */ });
-        }, 2000);
-    }
 })();
 </script>
 </body>

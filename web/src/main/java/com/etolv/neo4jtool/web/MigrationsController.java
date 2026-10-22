@@ -89,7 +89,14 @@ public class MigrationsController {
         model.addAttribute("migration", migration);
         model.addAttribute("plan", migration.planJson() == null ? null : Json.read(migration.planJson(), MigrationPlan.class));
         model.addAttribute("progress", jobs.progress(id));
-        model.addAttribute("log", jobLog.forScope(migration.scope(), 300));
+        // the log of the latest run only; the Logs page has all of them
+        long runStart = jobLog.lastRunStart(migration.scope());
+        java.util.List<JobLog.Line> log = jobLog.from(migration.scope(), runStart, 400);
+        model.addAttribute("log", log);
+        model.addAttribute("logFrom", runStart);
+        model.addAttribute("logAfter", log.isEmpty() ? 0 : log.getLast().id());
+        model.addAttribute("liveMigration", id);
+        model.addAttribute("liveBusy", migration.state().busy());
         model.addAttribute("dryRun", migration.dryRunId() == null ? null : reports.find(migration.dryRunId()).orElse(null));
         model.addAttribute("result", migration.runJson() == null || !migration.isSplit() ? null
                 : Json.read(migration.runJson(), SplitResult.class));
@@ -97,9 +104,6 @@ public class MigrationsController {
                 : Json.read(migration.runJson(), MergeResult.class));
         model.addAttribute("targetKind", migration.targetId() == null ? null
                 : endpoints.find(migration.targetId()).map(e -> e.kind().name()).orElse(null));
-        if (migration.state().busy()) {
-            model.addAttribute("refresh", 15);   // a fallback: the page fetches itself every 2 seconds while it runs
-        }
         return "migration";
     }
 

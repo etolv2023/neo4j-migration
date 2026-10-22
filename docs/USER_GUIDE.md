@@ -346,6 +346,7 @@ Things to know:
 | Ids per query | batch size of the dry run (min 100; default 10,000) |
 | Examples per section | how many example rows the report keeps |
 | Check relationships | switch off to make the dry run faster |
+| Live refresh (seconds) | how often a running job and the resource bar update themselves (default 2, 1 to 60) |
 | Stay signed in for (hours) | how long you can leave the dashboard alone before signing in again (default 12, 1 to 720); counts from your last click and applies to the next sign-in |
 | Require two-factor sign-in for every user | off by default; when on, a user who has not set it up is sent to do so right after the password. You can only turn it on once your own account has two-factor. |
 
@@ -359,7 +360,11 @@ Settings are stored in MySQL and apply to the next job. You can also change your
 ### While a job runs
 
 Every button that starts something shows a spinner and cannot be pressed twice. Links and forms that take long (Schema, Check, Reload) put a "please wait" screen over the page.
-A migration that is working shows a progress card: the phase, a bar with `done / total` and a percentage when the phase has a count, a moving bar when it has none, plus elapsed time, speed and the time left.
+A migration that is working shows a progress card at the top: the step it is in (`Step 6 of 11`), a bar with a percentage when the step has a count, a moving bar when it has none, plus elapsed time, speed and the time left. While `neo4j-admin import` runs, the bar follows its own parts (`part 1 of 4: Node import 50%`).
+
+Under Plan, Dry run and Run the steps are written out: a green square is done (with how long it took), a blue one is running, an empty one is still to come, a red one is where a job stopped. Run shows the steps of a merge or a split in the order they happen, and the extra detail of the running step (for example the pass of an export) under its name.
+
+The page updates itself without reloading: the server pushes news every few seconds (Settings → Live refresh), and a connection that cannot carry that (some proxies hold it back) is asked instead. The bar at the top of every page shows the RAM in use, swap, the free space of the disk of the work folder, the processor, and what the processes started by the dashboard hold; it turns amber and then red when the memory or the disk is nearly used up. The Log shows the latest run only (Logs → Jobs has all of them): long lists such as the thousands of CSV files are one line, the import's progress is a line per ten percent, errors are red, warnings amber and the start of each step blue; **Important only** hides the rest.
 The log under it updates by itself every two seconds; when the job ends the page reloads to show the result.
 **Copy log** (on a migration, on Logs → Jobs and on Logs → What people did) puts the text on your clipboard, one line per row.
 
