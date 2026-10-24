@@ -604,7 +604,10 @@ class WebIT {
                 .andReturn().getResponse().getContentAsString();
         assertThat(csv.lines().toList()).hasSize(2);
         assertThat(csv.lines().findFirst().orElseThrow()).startsWith("old_id,new_id");
-        assertThat(csv.lines().skip(1).findFirst().orElseThrow()).startsWith("15,20,");
+        String[] first = csv.lines().skip(1).findFirst().orElseThrow().split(",");
+        assertThat(first[0]).isEqualTo("15");
+        // above the highest id of both databases (0-19 from the seed, more when an earlier test added nodes)
+        assertThat(Long.parseLong(first[1])).isGreaterThanOrEqualTo(20);
 
         // choosing properties keeps the dry run; changing the options throws it away
         mvc.perform(post("/migrations/" + id + "/renumber/excluded").param("excluded", "legacy", "phone").with(ADMIN).with(csrf()))
