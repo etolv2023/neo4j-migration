@@ -11,7 +11,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrlPattern;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -584,8 +586,11 @@ class WebIT {
     @Order(24)
     void anIdThatIsTakenCanBeRenumberedAndTheDryRunShowsTheNewIds() throws Exception {
         // the same selection that is BLOCKED above; with the option on only a warning is left
+        // a node outside the company (org 1) whose property is the id that is taken: it can only be listed, never changed
+        run(LIVE, "MATCH (n) WHERE id(n) = 3 SET n.ref = 15");
         long id = createMigration("org 2 back to live, new ids", "backup", "live",
-                Map.of("orgIds", "2", "renumber", "true", "renumberLists", "true"));
+                Map.of("orgIds", "2", "renumber", "true", "renumberLists", "true", "renumberScanOutside", "true"));
+        assertThat(migrations.find(id).orElseThrow().renumber().scanOutside()).isTrue();
         assertThat(migrations.find(id).orElseThrow().renumber().enabled()).isTrue();
         assertThat(migrations.find(id).orElseThrow().renumber().excluded()).isEmpty();
         mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));
@@ -599,9 +604,18 @@ class WebIT {
         mvc.perform(get("/dry-runs/" + row.id()).with(ADMIN)).andExpect(status().isOk())
                 .andExpect(content().string(containsString("New ids")))
                 .andExpect(content().string(containsString("Download old id")))
-                .andExpect(content().string(containsString("No property of the company")));
-        String csv = mvc.perform(get("/dry-runs/" + row.id() + "/id-mapping.csv").with(ADMIN)).andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
+                .andExpect(content().string(containsString("No property of the company")))
+                .andExpect(content().string(containsString("Outside the company")))
+                .andExpect(content().string(containsString("not changed")))
+                .andExpect(content().string(containsString("Download (JSON)")));
+        assertThat(reports.reportJson(row.id()).orElseThrow()).contains("\"outside\"");
+        assertThat(reports.mappingEntries(row.id())).contains(1L);
+        var all = com.etolv.neo4jtool.engine.Json.read(download("/dry-runs/" + row.id() + "/id-mapping.json"),
+                com.etolv.neo4jtool.engine.build.RenumberPlanner.Entry[].class);
+        assertThat(all).hasSize(1);
+        assertThat(all[0].oldId()).isEqualTo(15L);
+        assertThat(all[0].targetLabels()).containsExactly("Service");
+        String csv = download("/dry-runs/" + row.id() + "/id-mapping.csv");
         assertThat(csv.lines().toList()).hasSize(2);
         assertThat(csv.lines().findFirst().orElseThrow()).startsWith("old_id,new_id");
         String[] first = csv.lines().skip(1).findFirst().orElseThrow().split(",");
@@ -628,6 +642,37 @@ class WebIT {
         assertThat(migrations.find(off).orElseThrow().renumber().enabled()).isFalse();
         mvc.perform(get("/migrations/" + off).with(ADMIN)).andExpect(content().string(containsString("stop (the dry run is blocked)")));
         mvc.perform(get("/migrations/new").with(ADMIN)).andExpect(content().string(containsString("name=\"renumber\"")));
+    }
+
+    @Test
+    @Order(25)
+    void theListFieldsBecomeTagsAndTheOptionToLookOutsideIsASetting() throws Exception {
+        mvc.perform(get("/migrations/new").with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("data-chips=\"any\"")))
+                .andExpect(content().string(containsString("data-chips=\"label\"")))
+                .andExpect(content().string(containsString("data-chips=\"int\"")))
+                .andExpect(content().string(containsString("data-chips=\"range\"")))
+                .andExpect(content().string(containsString("name=\"renumberScanOutside\"")))
+                .andExpect(content().string(containsString("/chips.js")));
+        mvc.perform(get("/chips.js").with(ADMIN)).andExpect(status().isOk()).andExpect(content().string(containsString("data-chips")));
+
+        AppSettings before = settings.get();
+        try {
+            assertThat(before.renumber().scanOutside()).as("on unless it is turned off").isTrue();
+            mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000", Map.of("renumber", "true"))
+                    .with(ADMIN).with(csrf()));
+            assertThat(settings.get().renumber().scanOutside()).isFalse();
+            mvc.perform(settingsForm("DOCKER", "neo4j:5.26.29-community", "org_id", "10000",
+                    Map.of("renumber", "true", "renumberScanOutside", "true")).with(ADMIN).with(csrf()));
+            assertThat(settings.get().renumber().scanOutside()).isTrue();
+        } finally {
+            settings.save(before);
+        }
+    }
+
+    private String download(String path) throws Exception {
+        var started = mvc.perform(get(path).with(ADMIN)).andExpect(request().asyncStarted()).andReturn();
+        return mvc.perform(asyncDispatch(started)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
     }
 
     @Test

@@ -43,8 +43,15 @@ public final class RenumberPlanner {
      * @param moved    the nodes that are restored (including the renumbered ones)
      * @param existing company nodes already on the target that the source also had
      * @param newer    company nodes only the target has (made after the backup); they are changed only if asked
+     * @param outside  nodes of the target that are not the company's; they are never changed, this only tells where an old id is
+     *                 held there too. Null when it was not searched
      */
-    public record References(ReferenceScan.Result moved, ReferenceScan.Result existing, ReferenceScan.Result newer) {
+    public record References(ReferenceScan.Result moved, ReferenceScan.Result existing, ReferenceScan.Result newer,
+                             ReferenceScan.Result outside) {
+
+        public References(ReferenceScan.Result moved, ReferenceScan.Result existing, ReferenceScan.Result newer) {
+            this(moved, existing, newer, null);
+        }
 
         public long nodesToChange(boolean includeNewer) {
             return moved.nodesWithReferences() + existing.nodesWithReferences() + (includeNewer ? newer.nodesWithReferences() : 0);
@@ -55,16 +62,29 @@ public final class RenumberPlanner {
         }
     }
 
+    /** Receives every row of the id table, in batches, while the plan is made. */
+    public interface MappingSink {
+        void accept(List<Entry> batch);
+    }
+
     private RenumberPlanner() {
+    }
+
+    public static Plan plan(Neo4jClient source, FastReader sourceFast, Neo4jClient target, FastReader targetFast,
+                            SelectionConfig selection, IdSet clash, IdSet missing, RenumberOptions options, int batchSize, int workers,
+                            int examples, DryRunProgress progress) {
+        return plan(source, sourceFast, target, targetFast, selection, clash, missing, options, batchSize, workers, examples, progress,
+                null);
     }
 
     /**
      * @param clash   selected ids the target uses for another node
      * @param missing selected ids the target does not have
+     * @param sink    gets every row of the id table (the plan itself keeps the first {@link #MAPPING_LIMIT}); may be null
      */
     public static Plan plan(Neo4jClient source, FastReader sourceFast, Neo4jClient target, FastReader targetFast,
                             SelectionConfig selection, IdSet clash, IdSet missing, RenumberOptions options, int batchSize, int workers,
-                            int examples, DryRunProgress progress) {
+                            int examples, DryRunProgress progress, MappingSink sink) {
         progress.phase("Choosing new ids");
         IdSet sourceAll = sourceFast != null ? sourceFast.allIds(workers, progress) : Ids.all(source);
         IdRemap remap;
@@ -75,7 +95,7 @@ public final class RenumberPlanner {
             long targetMax = targetFast != null ? targetFast.allIds(workers, progress).max() : highestId(target);
             remap = IdRemap.above(clash, Math.max(targetMax, sourceAll.max()) + 1);
         }
-        List<Entry> mapping = mapping(source, target, remap, selection.orgProperty(), batchSize);
+        List<Entry> mapping = mapping(source, target, remap, selection.orgProperty(), batchSize, sink);
 
         String org = selection.orgProperty();
         progress.phase("Looking for the old ids in the properties of the moved nodes");
@@ -83,19 +103,27 @@ public final class RenumberPlanner {
                 workers, examples, progress);
         ReferenceScan.Result inExisting;
         ReferenceScan.Result inNewer;
+        IdSet companyIds = IdSet.empty();
         if (selection.orgIds().isEmpty()) {
             inExisting = new ReferenceScan.Result("EXISTING", 0, 0, 0, List.of());
             inNewer = new ReferenceScan.Result("NEWER", 0, 0, 0, List.of());
         } else {
             progress.phase("Looking for the old ids in the company's nodes already on the target");
             SelectionConfig company = new SelectionConfig(org, selection.orgIds(), null, null, null, null, false);
-            IdSet companyIds = targetFast != null ? targetFast.select(company, workers, progress) : Ids.selected(target, company);
+            companyIds = targetFast != null ? targetFast.select(company, workers, progress) : Ids.selected(target, company);
             inExisting = scan("EXISTING", target, targetFast, companyIds.intersect(sourceAll), remap, org, options, batchSize, workers,
                     examples, progress);
             inNewer = scan("NEWER", target, targetFast, companyIds.minus(sourceAll), remap, org, options, batchSize, workers,
                     examples, progress);
         }
-        References references = new References(inMoved, inExisting, inNewer);
+        ReferenceScan.Result inOutside = null;
+        if (options.scanOutside()) {
+            progress.phase("Looking for the old ids outside the company, in the rest of the target");
+            IdSet targetAll = targetFast != null ? targetFast.allIds(workers, progress) : Ids.all(target);
+            inOutside = scan("OUTSIDE", target, targetFast, targetAll.minus(companyIds), remap, org, options, batchSize, workers,
+                    examples, progress);
+        }
+        References references = new References(inMoved, inExisting, inNewer, inOutside);
         long[] news = remap.newIds();
         return new Plan(options.allocation().name(), remap.size(), news[0], remap.highestNewId(), mapping,
                 remap.size() > MAPPING_LIMIT, options.lists(), options.includeNewerNodes(), references);
@@ -115,12 +143,13 @@ public final class RenumberPlanner {
         }
     }
 
-    private static List<Entry> mapping(Neo4jClient source, Neo4jClient target, IdRemap remap, String org, int batch) {
+    private static List<Entry> mapping(Neo4jClient source, Neo4jClient target, IdRemap remap, String org, int batch, MappingSink sink) {
         long[] olds = remap.oldIds();
-        int shown = Math.min(olds.length, MAPPING_LIMIT);
-        List<Entry> entries = new ArrayList<>(shown);
-        for (int from = 0; from < shown; from += batch) {
-            long[] slice = java.util.Arrays.copyOfRange(olds, from, Math.min(shown, from + batch));
+        int wanted = sink == null ? Math.min(olds.length, MAPPING_LIMIT) : olds.length;
+        List<Entry> entries = new ArrayList<>(Math.min(wanted, MAPPING_LIMIT));
+        for (int from = 0; from < wanted; from += batch) {
+            long[] slice = java.util.Arrays.copyOfRange(olds, from, Math.min(wanted, from + batch));
+            List<Entry> part = new ArrayList<>(slice.length);
             Long2ObjectOpenHashMap<Object[]> inSource = identities(source, slice, org);
             Long2ObjectOpenHashMap<Object[]> inTarget = identities(target, slice, org);
             for (long id : slice) {
@@ -128,7 +157,13 @@ public final class RenumberPlanner {
                 Object[] t = inTarget.getOrDefault(id, new Object[] {List.<String>of(), null});
                 @SuppressWarnings("unchecked")
                 Entry entry = new Entry(id, remap.map(id), (List<String>) s[0], s[1], (List<String>) t[0], t[1]);
-                entries.add(entry);
+                part.add(entry);
+                if (entries.size() < MAPPING_LIMIT) {
+                    entries.add(entry);
+                }
+            }
+            if (sink != null) {
+                sink.accept(part);
             }
         }
         return entries;

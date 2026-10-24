@@ -2,6 +2,7 @@ package com.etolv.neo4jtool.engine.dryrun;
 
 import com.etolv.neo4jtool.engine.build.FastReader;
 import com.etolv.neo4jtool.engine.build.IdSet;
+import com.etolv.neo4jtool.engine.build.ReferenceScan;
 import com.etolv.neo4jtool.engine.build.RenumberPlanner;
 import com.etolv.neo4jtool.engine.conn.Neo4jClient;
 import com.etolv.neo4jtool.engine.dryrun.DryRunReport.ConflictSample;
@@ -56,6 +57,13 @@ public final class DryRunService {
      */
     public DryRunReport run(Neo4jClient source, FastReader sourceFast, Neo4jClient target, FastReader targetFast,
                             SelectionConfig config, DryRunOptions options, DryRunProgress progress) {
+        return run(source, sourceFast, target, targetFast, config, options, progress, null);
+    }
+
+    /** As above; {@code mappingSink} gets every row of the table of new ids, not only the first ones the report keeps. */
+    public DryRunReport run(Neo4jClient source, FastReader sourceFast, Neo4jClient target, FastReader targetFast,
+                            SelectionConfig config, DryRunOptions options, DryRunProgress progress,
+                            RenumberPlanner.MappingSink mappingSink) {
         Instant started = Instant.now();
         String sourceVersion = source.serverVersion();
         String targetVersion = target == null ? null : target.serverVersion();
@@ -79,7 +87,7 @@ public final class DryRunService {
         RenumberPlanner.Plan renumbering = null;
         if (comparison != null && comparison.conflict() > 0 && options.renumber().enabled()) {
             renumbering = RenumberPlanner.plan(source, sourceFast, target, targetFast, config, idsWith(nodes, CONFLICT),
-                    idsWith(nodes, MISSING), options.renumber(), options.batchSize(), options.workers(), options.sampleSize(), progress);
+                    idsWith(nodes, MISSING), options.renumber(), options.batchSize(), options.workers(), options.sampleSize(), progress, mappingSink);
         }
 
         List<String> reasons = new ArrayList<>();
@@ -253,6 +261,13 @@ public final class DryRunService {
                 reasons.add(renumbering.references().newer().nodesWithReferences() + " nodes of the company that were made after the "
                         + "backup hold an old id; they are skipped (see 'New ids')");
             }
+        }
+        if (renumbering != null && renumbering.references() != null && renumbering.references().outside() != null
+                && renumbering.references().outside().values() > 0) {
+            ReferenceScan.Result outside = renumbering.references().outside();
+            reasons.add(outside.values() + " property values in " + outside.nodesWithReferences() + " nodes outside the company are "
+                    + "equal to an old id; they are NOT changed, check that none of them means a node that gets a new id (see 'New ids')");
+            gate = gate == Gate.BLOCKED ? gate : Gate.WARN;
         }
         if (relationships != null) {
             if (relationships.conflict() > 0) {

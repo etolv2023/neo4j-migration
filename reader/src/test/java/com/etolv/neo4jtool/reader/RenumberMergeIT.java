@@ -259,7 +259,26 @@ class RenumberMergeIT {
                 assertThat(refs.moved().groups().stream().filter(g -> g.property().equals("customer")).findFirst().orElseThrow().examples())
                         .extracting("before").contains("10", "12");
                 assertThat(report.relationships().conflict()).as("the relationships of the moved nodes are internal now").isZero();
+                // not the company's: filler 20 (x = 10, y = '12') and the newer filler (x = 10); only listed, never changed
+                var outside = refs.outside();
+                assertThat(outside).isNotNull();
+                assertThat(outside.values()).isEqualTo(3);
+                assertThat(outside.nodesWithReferences()).isEqualTo(2);
+                assertThat(outside.groups()).extracting("property", "type", "count").containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("x", "INTEGER", 2L), org.assertj.core.groups.Tuple.tuple("y", "STRING", 1L));
+                assertThat(outside.nodesScanned()).as("every node of the target except the company's two").isEqualTo(targetGraph.nodes.size() - 2);
+                assertThat(report.gateReasons()).anyMatch(r -> r.contains("outside the company") && r.contains("NOT changed"));
             }
+            var skipped = new com.etolv.neo4jtool.engine.dryrun.DryRunService().run(sourceBolt, targetBolt, selection,
+                    options.withRenumber(new RenumberOptions(true, RenumberOptions.Allocation.ABOVE_HIGHEST, true, false, Set.of(), false), 2),
+                    DryRunProgress.NONE);
+            assertThat(skipped.renumbering().references().outside()).as("the option is off").isNull();
+            assertThat(skipped.gateReasons()).noneMatch(r -> r.contains("outside the company"));
+
+            var rows = new ArrayList<com.etolv.neo4jtool.engine.build.RenumberPlanner.Entry>();
+            var withSink = new com.etolv.neo4jtool.engine.dryrun.DryRunService().run(sourceBolt, null, targetBolt, null, selection, options,
+                    DryRunProgress.NONE, rows::addAll);
+            assertThat(rows).as("the sink gets every row").isEqualTo(withSink.renumbering().mapping()).hasSize(2);
             assertThat(viaFast.renumbering().references()).isEqualTo(viaBolt.renumbering().references());
             assertThat(viaFast.renumbering().mapping()).isEqualTo(viaBolt.renumbering().mapping());
         }

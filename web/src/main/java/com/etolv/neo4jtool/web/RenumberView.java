@@ -49,15 +49,18 @@ final class RenumberView {
         }
     }
 
-    /** The id table as CSV: old id, new id, what the id is in the source, what holds it on the target. */
+    /** The id table in the report (its first rows) as CSV: old id, new id, what the id is in the source, what holds it on the target. */
     static String mappingCsv(RenumberPlanner.Plan plan) {
-        StringBuilder csv = new StringBuilder("old_id,new_id,labels,org,target_labels,target_org\n");
+        StringBuilder csv = new StringBuilder(MappingFile.CSV_HEADER);
         for (RenumberPlanner.Entry e : plan.mapping()) {
-            csv.append(e.oldId()).append(',').append(e.newId()).append(',').append(cell(String.join(";", e.labels()))).append(',')
-                    .append(cell(e.org())).append(',').append(cell(String.join(";", e.targetLabels()))).append(',')
-                    .append(cell(e.targetOrg())).append('\n');
+            csv.append(csvRow(e));
         }
         return csv.toString();
+    }
+
+    static String csvRow(RenumberPlanner.Entry e) {
+        return e.oldId() + "," + e.newId() + ',' + cell(String.join(";", e.labels())) + ',' + cell(e.org()) + ','
+                + cell(String.join(";", e.targetLabels())) + ',' + cell(e.targetOrg()) + '\n';
     }
 
     private static String cell(Object value) {

@@ -185,7 +185,10 @@ Rules, so that the result is never a surprise:
 - *Node ids* and *Id ranges* count as one field (a node matches if it is in either).
 - *Never move these ids* always wins.
 - **No filter at all selects every node.** The plan and the report show a warning when that happens.
-- Lists accept commas, spaces or new lines.
+- Lists accept commas, spaces or new lines. In the dashboard each value becomes a **tag** inside the box: type it and press
+  Enter, a comma or space (a range such as `5000 - 9000` is kept together), paste a whole list at once, click a tag to edit it,
+  click its × (or press Backspace in the empty box) to remove it, or *clear all*. A value that cannot work in that field
+  (letters in *Node ids*) turns red and the form is not sent until it is fixed. Without JavaScript the box is a plain text field.
 
 Example: organisations `12, 45`, label `Booking`, never `77` selects Booking nodes of those two companies, except node 77.
 
@@ -314,7 +317,8 @@ the target. With *When an id is taken on the target → give a node whose id is 
 the default in Settings):
 
 - **Dry run.** The report gets a **New ids** section: the table *old id → new id* (with what the source and the target hold at
-  the old id; a CSV to download), and the properties that hold an old id, found in
+  the old id; **CSV and JSON downloads with every row**, while the page keeps the first 20,000 and shows the first 200), and the
+  properties that hold an old id, found in
   1. the nodes that would be restored (including the renumbered ones),
   2. the company's nodes already on the target that the source also had,
   3. the company's nodes that are on the target but **not** in the source (made after the backup). They are listed apart and
@@ -324,6 +328,11 @@ the default in Settings):
   Each result is grouped by labels · property · kind of value (whole number, text, list), with the count and a few examples
   (`node: before → after`). Every property name has a **Leave alone** box: tick a property (a quantity, a phone number) that
   only looks like an id and save; the merge will not touch it in any node. The gate is WARN, not BLOCKED, while the option is on.
+- **Outside the company (warning only).** With *In the dry run, also look for the old ids outside the company* (on by default,
+  also a setting) the dry run reads every other node of the target once more and lists, grouped the same way, the properties
+  there whose value is an old id. They are **never changed** (those nodes are not the company's), but a number there may mean
+  a node that now has a new id, so the gate says so and you can check before running. It costs one more pass over the target,
+  a few seconds for a million nodes. The property that holds the organisation is not looked at.
 - **What counts as holding an old id.** The value *is* the id: a whole number equal to it, or a text of exactly its digits
   (no sign, spaces, leading zero or decimals). `122`, `"012"`, `12.0` and `"12 "` are not `12`. A whole number stays a whole
   number and a text stays a text; in a list (if lists are on) each matching element is replaced. Every value is looked up once,
@@ -338,8 +347,8 @@ the default in Settings):
   `<output>.id-mapping.csv` (or `<database>-id-mapping-<time>.csv` in the backup directory for a swap) lists old id, new id,
   labels and organisation of every renumbered node.
 
-What this does **not** do: it does not look inside relationship properties; it does not search nodes of other companies or
-nodes without the organisation property, and it cannot know whether a number in a property really was an id (that is why the
+What this does **not** do: it does not look inside relationship properties; it does not change nodes of other companies or
+nodes without the organisation property (it only lists them, above), and it cannot know whether a number in a property really was an id (that is why the
 dry run lists them and lets you leave properties alone); a company node made after the backup is judged only by its id being
 absent from the source.
 

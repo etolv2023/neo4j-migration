@@ -13,8 +13,11 @@ import java.util.Set;
  *                          this is off by default
  * @param excluded          properties that are never changed: {@code property} for every node, {@code Label.property} for the
  *                          nodes with that label
+ * @param scanOutside       the dry run also looks, in the nodes that are not the company's, for a property that holds an old id.
+ *                          Those are only listed as a warning, never changed. It reads every node of the target once more
  */
-public record RenumberOptions(boolean enabled, Allocation allocation, boolean lists, boolean includeNewerNodes, Set<String> excluded) {
+public record RenumberOptions(boolean enabled, Allocation allocation, boolean lists, boolean includeNewerNodes, Set<String> excluded,
+                              boolean scanOutside) {
 
     /** Where the new ids are taken. */
     public enum Allocation {
@@ -29,11 +32,15 @@ public record RenumberOptions(boolean enabled, Allocation allocation, boolean li
         excluded = excluded == null ? Set.of() : Set.copyOf(excluded);
     }
 
+    public RenumberOptions(boolean enabled, Allocation allocation, boolean lists, boolean includeNewerNodes, Set<String> excluded) {
+        this(enabled, allocation, lists, includeNewerNodes, excluded, true);
+    }
+
     public static RenumberOptions off() {
-        return new RenumberOptions(false, Allocation.ABOVE_HIGHEST, true, false, Set.of());
+        return new RenumberOptions(false, Allocation.ABOVE_HIGHEST, true, false, Set.of(), true);
     }
 
     public static RenumberOptions on() {
-        return new RenumberOptions(true, Allocation.ABOVE_HIGHEST, true, false, Set.of());
+        return new RenumberOptions(true, Allocation.ABOVE_HIGHEST, true, false, Set.of(), true);
     }
 }

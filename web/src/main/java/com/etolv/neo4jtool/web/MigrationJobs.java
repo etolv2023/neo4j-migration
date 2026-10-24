@@ -326,6 +326,7 @@ public class MigrationJobs {
 
             enter(migration.id(), "Opening '" + source.name() + "'");
             DryRunReport report;
+            MappingFile.Collector mapping = new MappingFile.Collector();
             try (Opened from = endpointService.open(source, out)) {
                 Opened to = null;
                 try {
@@ -334,7 +335,7 @@ public class MigrationJobs {
                         to = endpointService.open(target, out);
                     }
                     report = dryRunService.run(from.client(), from.fast(), to == null ? null : to.client(), to == null ? null : to.fast(),
-                            selection, options, progress(migration, out));
+                            selection, options, progress(migration, out), mapping);
                 } finally {
                     if (to != null) {
                         to.close();
@@ -342,6 +343,9 @@ public class MigrationJobs {
                 }
             }
             reports.finish(reportId, report);
+            if (mapping.entries() > 0) {
+                reports.saveMapping(reportId, mapping.entries(), mapping.finish());
+            }
             migrations.dryRunDone(migration.id(), reportId);
             jobLog.add(migration.scope(), "INFO", "Dry run finished: " + report.gate());
             audit.record("system", "dry_run_done", "#" + migration.id() + " " + report.gate());

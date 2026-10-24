@@ -69,8 +69,9 @@
                 The ids are worked out again when the merge runs; they are the same if neither database changes in between.</p>
             <p>
                 <a class="btn secondary" th:href="@{/dry-runs/{id}/id-mapping.csv(id=${row.id()})}">Download old id → new id (CSV)</a>
+                <a class="btn secondary" th:href="@{/dry-runs/{id}/id-mapping.json(id=${row.id()})}">Download (JSON)</a>
                 <span class="hint" th:if="${report.renumbering().mappingTruncated()}"
-                      th:text="${' The report keeps the first ' + @fmt.number(report.renumbering().mapping().size()) + '; the merge writes all of them to a file.'}"></span>
+                      th:text="${' The page keeps the first ' + @fmt.number(report.renumbering().mapping().size()) + (mappingEntries != null ? '; the downloads have all ' + @fmt.number(mappingEntries) + '.' : '; this report was made before the whole table was stored, so the downloads have only these.')}"></span>
             </p>
             <table><thead><tr><th>Old id</th><th>New id</th><th>Node (source)</th><th>What holds the old id on the target</th></tr></thead>
                 <tbody><tr th:each="e, it : ${report.renumbering().mapping()}" th:if="${it.index < 200}">
@@ -113,6 +114,22 @@
                 </th:block>
                 <p class="hint" th:if="${properties.isEmpty()}">No property of the company's nodes holds an old id.</p>
 
+                <th:block th:if="${refs.outside() != null}">
+                    <h2 style="margin-top:18px">Outside the company <span class="pill">not changed</span></h2>
+                    <p th:if="${refs.outside().groups().isEmpty()}" class="hint"
+                       th:text="${'None of the ' + @fmt.number(refs.outside().nodesScanned()) + ' other nodes of the target holds an old id in a property.'}"></p>
+                    <th:block th:if="${!refs.outside().groups().isEmpty()}">
+                        <p><b th:text="${@fmt.number(refs.outside().values())}"></b> property values in <b th:text="${@fmt.number(refs.outside().nodesWithReferences())}"></b>
+                            of the <span th:text="${@fmt.number(refs.outside().nodesScanned())}"></span> other nodes of the target are equal to an old id. They are <b>not</b> changed: these nodes
+                            are not the company's. Check that none of them means one of the nodes that get a new id; if one does, it keeps pointing at the old id after the merge
+                            (the node that holds that id on the target now).</p>
+                        <table><thead><tr><th>Labels</th><th>Property</th><th>Value</th><th class="num">Nodes</th><th>Examples (node: value)</th></tr></thead>
+                            <tbody><tr th:each="g : ${refs.outside().groups()}">
+                                <td th:text="${g.labels().isEmpty() ? '(no labels)' : g.labels()}"></td><td class="mono" th:text="${g.property()}"></td>
+                                <td th:text="${g.type()}"></td><td class="num" th:text="${@fmt.number(g.count())}"></td>
+                                <td class="mono"><span th:each="x, it : ${g.examples()}" th:text="${x.nodeId() + ': ' + x.before() + (it.last ? '' : '; ')}"></span></td></tr></tbody></table>
+                    </th:block>
+                </th:block>
                 <th:block th:each="part : ${ {refs.moved(), refs.existing(), refs.newer()} }" th:if="${!part.groups().isEmpty()}">
                     <h2 style="margin-top:18px" th:switch="${part.scope()}">
                         <span th:case="'MOVED'">In the nodes to restore</span>

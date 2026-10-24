@@ -36,23 +36,23 @@
             <p class="sub">Fill in any of these. A node must match <b>all</b> the fields you fill in; inside one field, <b>any</b> of the values.</p>
             <div class="row">
                 <div><label for="orgIds">Companies (organisation ids)</label>
-                    <input id="orgIds" name="orgIds" type="text" th:value="${selection.orgIds()}" placeholder="12, 45">
+                    <input id="orgIds" name="orgIds" type="text" data-chips="any" th:value="${selection.orgIds()}" placeholder="12, 45">
                     <p class="hint">One or more. Matches the property <span class="mono" th:text="${defaultOrgProperty}"></span> (change it in Settings).</p></div>
                 <div><label for="labels">Labels</label>
-                    <input id="labels" name="labels" type="text" th:value="${selection.labels()}" placeholder="Booking, Service">
+                    <input id="labels" name="labels" type="text" data-chips="label" th:value="${selection.labels()}" placeholder="Booking, Service">
                     <p class="hint">A node needs at least one of them.</p></div>
             </div>
             <div class="row">
                 <div><label for="ids">Node ids</label>
-                    <input id="ids" name="ids" type="text" th:value="${selection.ids()}" placeholder="1001, 1002">
+                    <input id="ids" name="ids" type="text" data-chips="int" th:value="${selection.ids()}" placeholder="1001, 1002">
                     <p class="hint">Exact <span class="mono">id(n)</span> values.</p></div>
                 <div><label for="idRanges">Id ranges</label>
-                    <input id="idRanges" name="idRanges" type="text" th:value="${selection.idRanges()}" placeholder="5000-9000, 12000-12500">
+                    <input id="idRanges" name="idRanges" type="text" data-chips="range" th:value="${selection.idRanges()}" placeholder="5000-9000, 12000-12500">
                     <p class="hint">Inclusive. Ids and ranges together count as one condition.</p></div>
             </div>
             <div class="row">
                 <div><label for="excludeIds">Never move these ids</label>
-                    <input id="excludeIds" name="excludeIds" type="text" th:value="${selection.excludeIds()}" placeholder="77, 78">
+                    <input id="excludeIds" name="excludeIds" type="text" data-chips="int" th:value="${selection.excludeIds()}" placeholder="77, 78">
                     <p class="hint">Always wins over everything above.</p></div>
                 <div><label for="orgProperty">Organisation property (optional)</label>
                     <input id="orgProperty" name="orgProperty" type="text" th:value="${selection.orgProperty()}" th:placeholder="${defaultOrgProperty}">

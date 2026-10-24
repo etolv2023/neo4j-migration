@@ -56,7 +56,8 @@ public class SettingsStore {
                 new RenumberOptions(Boolean.parseBoolean(rows.getOrDefault("renumber_enabled", "false")),
                         RenumberOptions.Allocation.valueOf(rows.getOrDefault("renumber_allocation", RenumberOptions.Allocation.ABOVE_HIGHEST.name())),
                         Boolean.parseBoolean(rows.getOrDefault("renumber_lists", "true")),
-                        Boolean.parseBoolean(rows.getOrDefault("renumber_include_newer", "false")), java.util.Set.of()));
+                        Boolean.parseBoolean(rows.getOrDefault("renumber_include_newer", "false")), java.util.Set.of(),
+                        Boolean.parseBoolean(rows.getOrDefault("renumber_scan_outside", "true"))));
     }
 
     /** @throws IllegalArgumentException when a value cannot work */
@@ -97,6 +98,7 @@ public class SettingsStore {
         put("renumber_allocation", s.renumber().allocation().name());
         put("renumber_lists", String.valueOf(s.renumber().lists()));
         put("renumber_include_newer", String.valueOf(s.renumber().includeNewerNodes()));
+        put("renumber_scan_outside", String.valueOf(s.renumber().scanOutside()));
     }
 
     private static void validate(AppSettings s) {

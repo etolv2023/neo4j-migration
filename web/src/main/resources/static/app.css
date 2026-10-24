@@ -257,3 +257,18 @@ details.selection > pre { margin: 0 22px 18px; max-height: 320px; }
   .progress-card .numbers { font-size: 13px; }
   .busy-box { margin: 0 16px; padding: 20px; }
 }
+
+/* a field that takes a list of values: every value is a tag inside the box (chips.js) */
+.chips { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 4px 6px; cursor: text; }
+.chips:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; }
+.chips.has-bad { border-color: var(--bad); }
+.chips-list { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; min-height: 32px; }
+.tag { display: inline-flex; align-items: center; gap: 2px; background: var(--info-bg); color: var(--info); border-radius: 6px; padding: 1px 3px 1px 9px; font-size: 13.5px; line-height: 1.6; max-width: 100%; flex: 0 0 auto; }
+.tag.bad { background: var(--bad-bg); color: var(--bad); }
+.tag-text { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32ch; font-variant-numeric: tabular-nums; }
+.tag-x { all: unset; cursor: pointer; width: 20px; height: 20px; line-height: 19px; text-align: center; border-radius: 4px; font-size: 16px; opacity: .7; }
+.tag-x:hover, .tag-x:focus-visible { opacity: 1; background: rgba(127,127,127,.25); }
+.chips input.chips-input { flex: 1 1 90px; min-width: 90px; width: auto; border: 0; background: transparent; padding: 4px 4px; }
+.chips input.chips-input:focus { outline: 0; }
+.chips-note { min-height: 0; } .chips-note:empty { display: none; }
+.chips-note.bad { color: var(--bad); }

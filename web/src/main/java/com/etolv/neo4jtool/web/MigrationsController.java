@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 @Controller
@@ -67,8 +68,10 @@ public class MigrationsController {
                   @RequestParam(defaultValue = "false") boolean renumber,
                   @RequestParam(defaultValue = "ABOVE_HIGHEST") RenumberOptions.Allocation renumberAllocation,
                   @RequestParam(defaultValue = "false") boolean renumberLists,
-                  @RequestParam(defaultValue = "false") boolean renumberIncludeNewer, Model model) {
-        RenumberOptions chosen = new RenumberOptions(renumber, renumberAllocation, renumberLists, renumberIncludeNewer, Set.of());
+                  @RequestParam(defaultValue = "false") boolean renumberIncludeNewer,
+                  @RequestParam(defaultValue = "false") boolean renumberScanOutside, Model model) {
+        RenumberOptions chosen = new RenumberOptions(renumber, renumberAllocation, renumberLists, renumberIncludeNewer, Set.of(),
+                renumberScanOutside);
         try {
             if (name.isBlank()) {
                 throw new IllegalArgumentException("Give the migration a name");
@@ -140,13 +143,15 @@ public class MigrationsController {
     String renumber(@PathVariable long id, @RequestParam(defaultValue = "false") boolean renumber,
                     @RequestParam(defaultValue = "ABOVE_HIGHEST") RenumberOptions.Allocation renumberAllocation,
                     @RequestParam(defaultValue = "false") boolean renumberLists,
-                    @RequestParam(defaultValue = "false") boolean renumberIncludeNewer, RedirectAttributes redirect) {
+                    @RequestParam(defaultValue = "false") boolean renumberIncludeNewer,
+                    @RequestParam(defaultValue = "false") boolean renumberScanOutside, RedirectAttributes redirect) {
         Migration migration = find(id);
         if (migration.isSplit() || migration.state().busy() || migration.state() == Migration.State.RUN_DONE) {
             redirect.addFlashAttribute("error", "The options can be changed on a merge that is not working and has not been run");
             return "redirect:/migrations/" + id;
         }
-        RenumberOptions chosen = new RenumberOptions(renumber, renumberAllocation, renumberLists, renumberIncludeNewer, Set.of());
+        RenumberOptions chosen = new RenumberOptions(renumber, renumberAllocation, renumberLists, renumberIncludeNewer, Set.of(),
+                renumberScanOutside);
         migrations.renumberChanged(id, chosen.enabled() ? Json.write(chosen) : null);
         audit.record("migration_renumber", "#" + id + (chosen.enabled() ? " on" : " off"));
         redirect.addFlashAttribute("message", migration.dryRunId() == null ? "Saved."
@@ -168,7 +173,7 @@ public class MigrationsController {
             excluded.stream().map(String::strip).filter(name -> !name.isEmpty()).forEach(chosen::add);
         }
         migrations.excludedChanged(id, Json.write(new RenumberOptions(current.enabled(), current.allocation(), current.lists(),
-                current.includeNewerNodes(), chosen)));
+                current.includeNewerNodes(), chosen, current.scanOutside())));
         audit.record("migration_renumber_excluded", "#" + id + " " + chosen.size() + " properties");
         redirect.addFlashAttribute("message", chosen.isEmpty() ? "Every property that holds an old id will be changed."
                 : chosen.size() + " properties will be left as they are.");
@@ -212,6 +217,7 @@ public class MigrationsController {
             boolean current = migration != null && migration.dryRunId() != null && migration.dryRunId() == id
                     && !migration.state().busy() && migration.state() != Migration.State.RUN_DONE;
             model.addAttribute("canChoose", current && migration.renumber().enabled());
+            model.addAttribute("mappingEntries", reports.mappingEntries(row.id()).orElse(null));
             model.addAttribute("excludedNow", migration == null ? Set.of() : migration.renumber().excluded());
             model.addAttribute("properties", report == null ? List.of()
                     : RenumberView.properties(report.renumbering(), migration != null && current ? migration.renumber().excluded() : Set.of()));
@@ -230,15 +236,38 @@ public class MigrationsController {
         return "dry-run";
     }
 
+    /** Every row of the table of new ids (the report page shows only the first ones). */
     @GetMapping(value = "/dry-runs/{id}/id-mapping.csv", produces = "text/csv")
-    ResponseEntity<String> idMapping(@PathVariable long id) {
-        DryRunReport report = reports.reportJson(id).map(j -> Json.read(j, DryRunReport.class))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-        if (report.renumbering() == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+    ResponseEntity<StreamingResponseBody> idMapping(@PathVariable long id) {
+        return mappingDownload(id, "csv", "text/csv", MappingFile::writeCsv);
+    }
+
+    @GetMapping(value = "/dry-runs/{id}/id-mapping.json", produces = MediaType.APPLICATION_JSON_VALUE)
+    ResponseEntity<StreamingResponseBody> idMappingJson(@PathVariable long id) {
+        return mappingDownload(id, "json", MediaType.APPLICATION_JSON_VALUE, MappingFile::writeJson);
+    }
+
+    private interface MappingWriter {
+        void write(byte[] stored, java.io.OutputStream out) throws java.io.IOException;
+    }
+
+    private ResponseEntity<StreamingResponseBody> mappingDownload(long id, String extension, String type, MappingWriter writer) {
+        byte[] stored = reports.mapping(id).orElse(null);
+        if (stored == null) {
+            DryRunReport report = reports.reportJson(id).map(j -> Json.read(j, DryRunReport.class))
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+            if (report.renumbering() == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+            }
+            // a report made before the whole table was stored: the rows it kept
+            MappingFile.Collector collector = new MappingFile.Collector();
+            collector.accept(report.renumbering().mapping());
+            stored = collector.finish();
         }
-        return ResponseEntity.ok().header("Content-Disposition", "attachment; filename=new-ids-" + id + ".csv")
-                .body(RenumberView.mappingCsv(report.renumbering()));
+        byte[] data = stored;
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(type))
+                .header("Content-Disposition", "attachment; filename=new-ids-" + id + "." + extension)
+                .body(out -> writer.write(data, out));
     }
 
     @GetMapping(value = "/dry-runs/{id}/report.json", produces = MediaType.APPLICATION_JSON_VALUE)

@@ -20,7 +20,10 @@
             <label class="check"><input type="checkbox" name="renumberLists" value="true" th:checked="${renumber.lists()}"> Also change the ids inside list properties</label>
             <label class="check"><input type="checkbox" name="renumberIncludeNewer" value="true" th:checked="${renumber.includeNewerNodes()}"> Also change company nodes that were made after the backup</label>
             <p class="hint">A company node that the source never had cannot hold the old id on purpose: its number most likely means the node that has that id now.
-                They are listed in the dry run and left alone unless this is ticked.</p></div>
+                They are listed in the dry run and left alone unless this is ticked.</p>
+            <label class="check"><input type="checkbox" name="renumberScanOutside" value="true" th:checked="${renumber.scanOutside()}"> In the dry run, also look for the old ids outside the company</label>
+            <p class="hint">Lists, as a warning, the properties of the other nodes of the target that hold an old id. They are never changed. It reads every node of the target
+                once more, a few seconds for a million nodes.</p></div>
     </div>
 </th:block>
 </body>

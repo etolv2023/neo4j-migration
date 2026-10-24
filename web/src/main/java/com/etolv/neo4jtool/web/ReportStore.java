@@ -73,6 +73,19 @@ public class ReportStore {
                 .param(id).query(String.class).optional();
     }
 
+    public void saveMapping(long reportId, long entries, byte[] data) {
+        jdbc.sql("REPLACE INTO dry_run_mappings (report_id, entries, data) VALUES (?, ?, ?)").params(reportId, entries, data).update();
+    }
+
+    /** How many rows the stored table of new ids has; empty when none was stored. */
+    public Optional<Long> mappingEntries(long reportId) {
+        return jdbc.sql("SELECT entries FROM dry_run_mappings WHERE report_id = ?").param(reportId).query(Long.class).optional();
+    }
+
+    public Optional<byte[]> mapping(long reportId) {
+        return jdbc.sql("SELECT data FROM dry_run_mappings WHERE report_id = ?").param(reportId).query(byte[].class).optional();
+    }
+
     private static Row map(java.sql.ResultSet rs, int n) throws java.sql.SQLException {
         long migrationId = rs.getLong("migration_id");
         Long migration = rs.wasNull() ? null : migrationId;
