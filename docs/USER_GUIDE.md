@@ -291,8 +291,9 @@ What the Run does:
    `<database>-before-merge-<date-time>.dump`. A dump target is used as it is. The backup is never deleted by the tool.
 2. Reads the target from the backup (the files of the stopped server are not touched).
 3. **Sorts the selected ids.** An id on the target holding the same node (same labels, same organisation) is left alone. An id
-   that is free is restored. An id used by a *different* node is a **clash**: the run stops before building anything and tells
-   you the first id. The tool never decides which node wins.
+   that is free is restored. An id used by a *different* node is a **clash**: unless you switched on *give a node whose id is
+   taken a new id* (next section), the run stops before building anything and tells you the first id. The tool never decides
+   which node wins; with the option on, neither node is lost: the target keeps its node and the restored one gets a new id.
 4. Exports the whole target and the restored nodes as CSV, builds a **new** database from both with
    `neo4j-admin database import full --id-type=actual`, writes back what the import cannot carry, creates the target's indexes
    and constraints, and compares the new database with the exports (ids, counts and a hash over every node and relationship).
@@ -305,6 +306,42 @@ What the Run does:
 After a swap the migration page shows the backup file, the kept folder and a **Roll back** button. Rolling back sets the new
 store aside in `rolled-back-before-<date-time>/` and moves the old one back. Start the server only after you have looked at the
 result; stop it before rolling back. A merge that was swapped in cannot be run again until it is rolled back.
+
+### When an id is taken: restore under a new id and follow it
+
+Neo4j hands the ids of deleted nodes to new nodes, so some ids of the company's lost nodes may now belong to other nodes on
+the target. With *When an id is taken on the target → give a node whose id is taken a new id* switched on (per migration, with
+the default in Settings):
+
+- **Dry run.** The report gets a **New ids** section: the table *old id → new id* (with what the source and the target hold at
+  the old id; a CSV to download), and the properties that hold an old id, found in
+  1. the nodes that would be restored (including the renumbered ones),
+  2. the company's nodes already on the target that the source also had,
+  3. the company's nodes that are on the target but **not** in the source (made after the backup). They are listed apart and
+     skipped, because their number most likely means the node that has that id *now*. Tick *also change company nodes made
+     after the backup* to change them too.
+
+  Each result is grouped by labels · property · kind of value (whole number, text, list), with the count and a few examples
+  (`node: before → after`). Every property name has a **Leave alone** box: tick a property (a quantity, a phone number) that
+  only looks like an id and save; the merge will not touch it in any node. The gate is WARN, not BLOCKED, while the option is on.
+- **What counts as holding an old id.** The value *is* the id: a whole number equal to it, or a text of exactly its digits
+  (no sign, spaces, leading zero or decimals). `122`, `"012"`, `12.0` and `"12 "` are not `12`. A whole number stays a whole
+  number and a text stays a text; in a list (if lists are on) each matching element is replaced. Every value is looked up once,
+  so `10→12` and `12→14` never chain. The property that holds the organisation is never changed. Only nodes of the selected
+  organisation(s) are changed; other companies' nodes are never touched, even if a property in them holds the same number.
+- **New ids.** *Above the highest id* (default): from the highest id of the source and the target plus one, so an id that ever
+  belonged to a node is never reused. *Fill the free ids*: the smallest ids the new database does not use (smaller numbers, but
+  an id of a deleted node is used again and a later restore of that node would clash).
+- **Run.** The replacement is done while the CSV is written, not by a later update, so it costs almost nothing extra; the log
+  says *Rewrote N references in M nodes* and the stepper shows the step. The fingerprints that check the new database are
+  computed on the new ids and the new values, so the check proves the replaced data is what is in the database. An
+  `<output>.id-mapping.csv` (or `<database>-id-mapping-<time>.csv` in the backup directory for a swap) lists old id, new id,
+  labels and organisation of every renumbered node.
+
+What this does **not** do: it does not look inside relationship properties; it does not search nodes of other companies or
+nodes without the organisation property, and it cannot know whether a number in a property really was an id (that is why the
+dry run lists them and lets you leave properties alone); a company node made after the backup is judged only by its id being
+absent from the source.
 
 Things to know:
 
@@ -422,7 +459,8 @@ Be clear about this before relying on the tool:
 
 - **Merging into a running server.** Not possible with Neo4j Community and ids kept; stop the server and merge into its data
   directory or a dump.
-- **Resolving a clash.** An id used by a different node stops the run; the tool does not choose a winner.
+- **Resolving a clash.** An id used by a different node stops the run unless renumbering is on (then the restored node gets a
+  new id; see section 6b). It never overwrites a node on the target. Relationship properties are not rewritten.
 - **Split and merge are experimental.** They are covered by integration tests that compare every node and relationship, but
   they have not been tried on a copy of your real database.
 - Validated on synthetic data (3 million nodes in the benchmark for the dry run), not yet on a copy of your real database.

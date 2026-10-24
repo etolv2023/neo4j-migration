@@ -1,5 +1,8 @@
 package com.etolv.neo4jtool.engine.dryrun;
 
+import com.etolv.neo4jtool.engine.build.FastReader;
+import com.etolv.neo4jtool.engine.build.IdSet;
+import com.etolv.neo4jtool.engine.build.RenumberPlanner;
 import com.etolv.neo4jtool.engine.conn.Neo4jClient;
 import com.etolv.neo4jtool.engine.dryrun.DryRunReport.ConflictSample;
 import com.etolv.neo4jtool.engine.dryrun.DryRunReport.Gate;
@@ -12,6 +15,7 @@ import com.etolv.neo4jtool.engine.schema.SchemaSnapshot.OrgCount;
 import com.etolv.neo4jtool.engine.selection.CypherQuery;
 import com.etolv.neo4jtool.engine.selection.SelectionConfig;
 import com.etolv.neo4jtool.engine.selection.SelectionQueryBuilder;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -43,6 +47,15 @@ public final class DryRunService {
      */
     public DryRunReport run(Neo4jClient source, Neo4jClient target, SelectionConfig config,
                             DryRunOptions options, DryRunProgress progress) {
+        return run(source, null, target, null, config, options, progress);
+    }
+
+    /**
+     * @param sourceFast reads the source with the kernel when not null (used to search the properties for old ids)
+     * @param targetFast the same for the target
+     */
+    public DryRunReport run(Neo4jClient source, FastReader sourceFast, Neo4jClient target, FastReader targetFast,
+                            SelectionConfig config, DryRunOptions options, DryRunProgress progress) {
         Instant started = Instant.now();
         String sourceVersion = source.serverVersion();
         String targetVersion = target == null ? null : target.serverVersion();
@@ -63,8 +76,14 @@ public final class DryRunService {
                     .analyze();
         }
 
+        RenumberPlanner.Plan renumbering = null;
+        if (comparison != null && comparison.conflict() > 0 && options.renumber().enabled()) {
+            renumbering = RenumberPlanner.plan(source, sourceFast, target, targetFast, config, idsWith(nodes, CONFLICT),
+                    idsWith(nodes, MISSING), options.renumber(), options.batchSize(), options.workers(), options.sampleSize(), progress);
+        }
+
         List<String> reasons = new ArrayList<>();
-        Gate gate = gate(comparison, relationships, reasons);
+        Gate gate = gate(comparison, relationships, renumbering, options, reasons);
         Instant finished = Instant.now();
         return new DryRunReport(started.toString(), finished.toString(),
                 Duration.between(started, finished).toMillis(),
@@ -72,7 +91,7 @@ public final class DryRunService {
                 targetVersion, target == null ? null : target.database(),
                 config, config.selectsEverything(),
                 nodes.size(), byLabel(nodes, nodes.countsByLabelSet()), byOrg(nodes, nodes.countsByOrg()),
-                comparison, relationships, gate, reasons);
+                comparison, relationships, gate, reasons, renumbering);
     }
 
     private SelectedNodes loadSelected(Neo4jClient source, SelectionConfig config, DryRunProgress progress) {
@@ -201,11 +220,39 @@ public final class DryRunService {
         }
     }
 
-    private static Gate gate(NodeComparison comparison, RelationshipAnalysis relationships, List<String> reasons) {
+    private static IdSet idsWith(SelectedNodes nodes, byte status) {
+        LongArrayList ids = new LongArrayList();
+        for (int i = 0; i < nodes.size(); i++) {
+            if (nodes.status(i) == status) {
+                ids.add(nodes.id(i));
+            }
+        }
+        return IdSet.of(ids);
+    }
+
+    private static Gate gate(NodeComparison comparison, RelationshipAnalysis relationships, RenumberPlanner.Plan renumbering,
+                             DryRunOptions options, List<String> reasons) {
         Gate gate = Gate.CLEAR;
         if (comparison != null && comparison.conflict() > 0) {
-            reasons.add(comparison.conflict() + " selected ids are already used by a different node on the target");
-            gate = Gate.BLOCKED;
+            if (options.renumber().enabled()) {
+                reasons.add(comparison.conflict() + " selected ids are already used by a different node on the target; those nodes "
+                        + "will be moved with new ids (" + (renumbering == null ? "" : "from " + renumbering.firstNewId() + " ") + "see 'New ids')");
+                gate = Gate.WARN;
+            } else {
+                reasons.add(comparison.conflict() + " selected ids are already used by a different node on the target");
+                gate = Gate.BLOCKED;
+            }
+        }
+        if (renumbering != null && renumbering.references() != null) {
+            long values = renumbering.references().valuesToChange(renumbering.includeNewerNodes());
+            if (values > 0) {
+                reasons.add(values + " property values hold an old id and will be replaced by the new one, in "
+                        + renumbering.references().nodesToChange(renumbering.includeNewerNodes()) + " nodes");
+            }
+            if (!renumbering.includeNewerNodes() && renumbering.references().newer().nodesWithReferences() > 0) {
+                reasons.add(renumbering.references().newer().nodesWithReferences() + " nodes of the company that were made after the "
+                        + "backup hold an old id; they are skipped (see 'New ids')");
+            }
         }
         if (relationships != null) {
             if (relationships.conflict() > 0) {

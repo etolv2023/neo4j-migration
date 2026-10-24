@@ -1,5 +1,6 @@
 package com.etolv.neo4jtool.web;
 
+import com.etolv.neo4jtool.engine.build.RenumberOptions;
 import com.etolv.neo4jtool.engine.instance.InstanceSettings.Runner;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.security.core.Authentication;
@@ -57,7 +58,11 @@ public class SettingsController {
                 @RequestParam(defaultValue = "false") boolean requireTwoFactor,
                 @RequestParam(defaultValue = "12") int sessionHours,
                 @RequestParam(defaultValue = "2") int liveSeconds,
-                @RequestParam(defaultValue = "100") int layoutColumns, Authentication auth, RedirectAttributes redirect) {
+                @RequestParam(defaultValue = "100") int layoutColumns,
+                @RequestParam(defaultValue = "false") boolean renumber,
+                @RequestParam(defaultValue = "ABOVE_HIGHEST") RenumberOptions.Allocation renumberAllocation,
+                @RequestParam(defaultValue = "false") boolean renumberLists,
+                @RequestParam(defaultValue = "false") boolean renumberIncludeNewer, Authentication auth, RedirectAttributes redirect) {
         if (requireTwoFactor && !settings.get().requireTwoFactor() && !users.hasTwoFactor(auth.getName())) {
             redirect.addFlashAttribute("error", "Turn on two-factor sign-in for your own account first, so you do not lock yourself out");
             return "redirect:/settings";
@@ -67,7 +72,8 @@ public class SettingsController {
                     checkAfterBuild, tempHeap.strip(),
                     tempPageCache.strip(), startTimeoutMinutes, orgProperty.strip(), includeNeighbours, batchSize, sampleSize, analyseRelationships,
                     fastReader, readerLib.strip(), readerHeap.strip(), readerPageCache.strip(), workers, importThreads,
-                    importMemory.strip(), idSetMemoryMb, maxJobs, splitAsDirectory, requireTwoFactor, sessionHours, liveSeconds, layoutColumns));
+                    importMemory.strip(), idSetMemoryMb, maxJobs, splitAsDirectory, requireTwoFactor, sessionHours, liveSeconds, layoutColumns,
+                    new RenumberOptions(renumber, renumberAllocation, renumberLists, renumberIncludeNewer, java.util.Set.of())));
             audit.record("settings_save", null);
             redirect.addFlashAttribute("message", "Settings saved");
         } catch (IllegalArgumentException e) {

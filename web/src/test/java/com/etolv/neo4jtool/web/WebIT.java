@@ -581,6 +581,53 @@ class WebIT {
     }
 
     @Test
+    @Order(24)
+    void anIdThatIsTakenCanBeRenumberedAndTheDryRunShowsTheNewIds() throws Exception {
+        // the same selection that is BLOCKED above; with the option on only a warning is left
+        long id = createMigration("org 2 back to live, new ids", "backup", "live",
+                Map.of("orgIds", "2", "renumber", "true", "renumberLists", "true"));
+        assertThat(migrations.find(id).orElseThrow().renumber().enabled()).isTrue();
+        assertThat(migrations.find(id).orElseThrow().renumber().excluded()).isEmpty();
+        mvc.perform(post("/migrations/" + id + "/plan").with(ADMIN).with(csrf()));
+        awaitState(id, Migration.State.PLANNED);
+        mvc.perform(post("/migrations/" + id + "/dry-run").with(ADMIN).with(csrf()));
+        Migration done = awaitState(id, Migration.State.DRY_RUN_DONE);
+
+        ReportStore.Row row = reports.find(done.dryRunId()).orElseThrow();
+        assertThat(row.gate()).isEqualTo("WARN");
+        assertThat(row.conflictNodes()).isEqualTo(1);
+        mvc.perform(get("/dry-runs/" + row.id()).with(ADMIN)).andExpect(status().isOk())
+                .andExpect(content().string(containsString("New ids")))
+                .andExpect(content().string(containsString("Download old id")))
+                .andExpect(content().string(containsString("No property of the company")));
+        String csv = mvc.perform(get("/dry-runs/" + row.id() + "/id-mapping.csv").with(ADMIN)).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(csv.lines().toList()).hasSize(2);
+        assertThat(csv.lines().findFirst().orElseThrow()).startsWith("old_id,new_id");
+        assertThat(csv.lines().skip(1).findFirst().orElseThrow()).startsWith("15,20,");
+
+        // choosing properties keeps the dry run; changing the options throws it away
+        mvc.perform(post("/migrations/" + id + "/renumber/excluded").param("excluded", "legacy", "phone").with(ADMIN).with(csrf()))
+                .andExpect(redirectedUrl("/dry-runs/" + row.id()));
+        assertThat(migrations.find(id).orElseThrow().renumber().excluded()).containsExactlyInAnyOrder("legacy", "phone");
+        assertThat(migrations.find(id).orElseThrow().state()).isEqualTo(Migration.State.DRY_RUN_DONE);
+        mvc.perform(post("/migrations/" + id + "/renumber").param("renumber", "true").param("renumberAllocation", "FILL_GAPS")
+                        .with(ADMIN).with(csrf())).andExpect(redirectedUrl("/migrations/" + id));
+        Migration changed = migrations.find(id).orElseThrow();
+        assertThat(changed.state()).isEqualTo(Migration.State.PLANNED);
+        assertThat(changed.dryRunId()).isNull();
+        assertThat(changed.renumber().allocation().name()).isEqualTo("FILL_GAPS");
+        assertThat(changed.renumber().lists()).isFalse();
+        assertThat(changed.renumber().excluded()).isEmpty();
+
+        // without the option the same migration stays blocked, and its page says what the option does
+        long off = createMigration("org 2 back to live, no new ids", "backup", "live", Map.of("orgIds", "2"));
+        assertThat(migrations.find(off).orElseThrow().renumber().enabled()).isFalse();
+        mvc.perform(get("/migrations/" + off).with(ADMIN)).andExpect(content().string(containsString("stop (the dry run is blocked)")));
+        mvc.perform(get("/migrations/new").with(ADMIN)).andExpect(content().string(containsString("name=\"renumber\"")));
+    }
+
+    @Test
     @Order(23)
     void theLiveFeedTellsWhereAJobIsAndGivesTheLinesOfTheLatestRunOnly() throws Exception {
         long id = createMigration("live feed", "backup", "live", Map.of("orgIds", "1"));

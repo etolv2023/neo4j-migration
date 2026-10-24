@@ -2,7 +2,10 @@ package com.etolv.neo4jtool.reader;
 
 import com.etolv.neo4jtool.engine.build.BuildException;
 import com.etolv.neo4jtool.engine.build.CsvExporter;
+import com.etolv.neo4jtool.engine.build.IdRemap;
 import com.etolv.neo4jtool.engine.build.IdSet;
+import com.etolv.neo4jtool.engine.build.ReferenceRewrite;
+import com.etolv.neo4jtool.engine.build.Renumbering;
 import com.etolv.neo4jtool.engine.build.Verifier;
 import com.etolv.neo4jtool.engine.dryrun.DryRunProgress;
 import com.etolv.neo4jtool.engine.selection.SelectionConfig;
@@ -130,8 +133,17 @@ public final class ReaderServer {
                     rules.add(rule.get("outgoing").asBoolean() ? CsvExporter.Rule.out(other) : CsvExporter.Rule.in(other));
                 }
                 CsvExporter.Export export = new CsvExporter(source, ids, rules, c.path("prefix").asText(""),
-                        Path.of(c.get("dir").asText()), c.path("batch").asInt(10_000), workers, c.path("layoutColumns").asInt(0), progress).export();
+                        Path.of(c.get("dir").asText()), c.path("batch").asInt(10_000), workers, c.path("layoutColumns").asInt(0),
+                        renumbering(c, loaded), progress).export();
                 return exportResult(export);
+            }
+            case "scan": {
+                Map<String, IdSet> loaded = new HashMap<>();
+                com.etolv.neo4jtool.engine.build.ReferenceScan.Result found = com.etolv.neo4jtool.engine.build.ReferenceScan.run(
+                        c.path("scope").asText(""), source, load(loaded, c.get("ids").asText()),
+                        IdRemap.read(Path.of(c.get("remap").asText())), c.get("orgProperty").asText(), c.path("lists").asBoolean(false),
+                        c.path("batch").asInt(10_000), workers, c.path("examples").asInt(20), progress);
+                return (ObjectNode) JSON.valueToTree(found);
             }
             case "verify": {
                 IdSet ids = IdSet.read(Path.of(c.get("ids").asText()));
@@ -143,6 +155,32 @@ public final class ReaderServer {
             default:
                 throw new IllegalArgumentException("Unknown command '" + op + "'");
         }
+    }
+
+    /** What the parent asked for about nodes whose id is taken on the target; nothing when it did not ask. */
+    private static Renumbering renumbering(JsonNode c, Map<String, IdSet> loaded) {
+        IdRemap ids = c.has("idRemap") ? IdRemap.read(Path.of(c.get("idRemap").asText())) : IdRemap.none();
+        ReferenceRewrite rewrite = null;
+        if (c.has("rewrite")) {
+            JsonNode r = c.get("rewrite");
+            IdRemap values = IdRemap.read(Path.of(r.get("remap").asText()));
+            String orgProperty = r.get("orgProperty").asText();
+            boolean lists = r.path("lists").asBoolean(false);
+            java.util.Set<String> excluded = new java.util.HashSet<>();
+            r.path("excluded").forEach(v -> excluded.add(v.asText()));
+            if (r.has("orgIds")) {
+                List<Object> orgIds = new ArrayList<>();
+                for (JsonNode value : r.get("orgIds")) {
+                    orgIds.add(value.isIntegralNumber() ? (Object) value.asLong() : value.isNumber() ? (Object) value.asDouble()
+                            : value.isBoolean() ? (Object) value.asBoolean() : value.asText());
+                }
+                IdSet eligible = r.has("eligible") ? load(loaded, r.get("eligible").asText()) : null;
+                rewrite = ReferenceRewrite.forOrganisations(values, orgProperty, orgIds, eligible, lists, excluded);
+            } else {
+                rewrite = ReferenceRewrite.forMovedNodes(values, orgProperty, lists, excluded);
+            }
+        }
+        return new Renumbering(ids, rewrite);
     }
 
     private static IdSet load(Map<String, IdSet> loaded, String path) {
@@ -167,6 +205,9 @@ public final class ReaderServer {
         result.put("nodeFingerprint", export.nodeFingerprint());
         result.put("relationshipFingerprint", export.relationshipFingerprint());
         result.put("outside", export.relationshipsToOutside());
+        result.put("renumberedNodes", export.renumberedNodes());
+        result.put("rewrittenNodes", export.rewrittenNodes());
+        result.put("rewrittenValues", export.rewrittenValues());
         result.put("fixupCount", export.fixups().size());
         ArrayNode fixupFiles = result.putArray("fixupFiles");
         export.fixups().files().forEach(file -> fixupFiles.add(file.toString()));

@@ -72,6 +72,8 @@ public final class MergeService {
         Phases phases = new Phases(progress);
         String database = target.database();
         Workspace workspace = Workspace.create(workDir, "merge");
+        Path mappingFile = swap ? backupDirectory.resolve(database + "-id-mapping-" + stamp + ".csv")
+                : outputFile.resolveSibling(outputFile.getFileName() + ".id-mapping.csv");
         try {
             phases.start("Backing up the target");
             String signature = target.dataDirectory() ? StoreSignature.of(target.path(), database) : null;
@@ -81,14 +83,14 @@ public final class MergeService {
             Built built = null;
             if (options.build().fastReaders() != null) {
                 built = buildFast(source, sourceFast, selection, runner, workspace, backup, database, options, outputFile, swap,
-                        phases, progress, log);
+                        mappingFile, phases, progress, log);
             }
             if (built == null) {
                 try (RunningInstance targetServer = runner.startFromDump(backup, database, log);
                      Neo4jClient targetClient = new Neo4jClient(new ConnectionSettings(targetServer.boltUri(), null, null, database))) {
                     targetClient.verify();
                     built = build(source, sourceFast, targetClient, null, selection, runner, workspace, database, options,
-                            outputFile, swap, phases, progress, log);
+                            outputFile, swap, mappingFile, phases, progress, log);
                 }
             }
 
@@ -124,7 +126,7 @@ public final class MergeService {
 
     /** What was built, for the result. */
     private record Built(IdSet target, IdSet restored, long same, CsvExporter.Export targetExport, CsvExporter.Export restoredExport,
-                         int schemaStatements, Path dump) {
+                         int schemaStatements, Path dump, Path mapping) {
     }
 
     /**
@@ -134,7 +136,7 @@ public final class MergeService {
      */
     private Built buildFast(Neo4jClient source, FastReader sourceFast, SelectionConfig selection, InstanceRunner runner,
                             Workspace workspace, Path backup, String database, MergeOptions options, Path outputFile, boolean swap,
-                            Phases phases, DryRunProgress progress, Consumer<String> log) throws IOException {
+                            Path mappingFile, Phases phases, DryRunProgress progress, Consumer<String> log) throws IOException {
         FastReader targetFast;
         try {
             phases.start("Loading the backup to read it directly");
@@ -149,15 +151,16 @@ public final class MergeService {
              Neo4jClient targetClient = new Neo4jClient(new ConnectionSettings(opened.boltUri(), null, null, database))) {
             targetClient.verify();
             return build(source, sourceFast, targetClient, opened, selection, runner, workspace, database, options, outputFile,
-                    swap, phases, progress, log);
+                    swap, mappingFile, phases, progress, log);
         }
     }
 
     private Built build(Neo4jClient source, FastReader sourceFast, Neo4jClient target, FastReader targetFast,
                         SelectionConfig selection, InstanceRunner runner, Workspace workspace, String database,
-                        MergeOptions options, Path outputFile, boolean swap, Phases phases, DryRunProgress progress,
-                        Consumer<String> log) throws IOException {
+                        MergeOptions options, Path outputFile, boolean swap, Path mappingFile, Phases phases,
+                        DryRunProgress progress, Consumer<String> log) throws IOException {
         BuildOptions build = options.build();
+        RenumberOptions renumber = options.renumber();
         String org = selection.orgProperty();
 
         phases.start("Comparing the selection with the target");
@@ -167,34 +170,71 @@ public final class MergeService {
         IdSet missing = selected.minus(targetIds);
         IdSet present = selected.intersect(targetIds);
         IdSet clash = differing(source, target, present, org, build.batchSize());
+        IdRemap remap = IdRemap.none();
+        IdSet sourceAll = null;
         if (clash.size() > 0) {
-            throw new BuildException(clash.size() + " selected ids are used by a different node on the target (the first is "
-                    + clash.toArray()[0] + "). Restoring would lose one of the two nodes. Nothing was changed; see the dry run.");
+            if (!renumber.enabled()) {
+                throw new BuildException(clash.size() + " selected ids are used by a different node on the target (the first is "
+                        + clash.toArray()[0] + "). Restoring would lose one of the two nodes. Nothing was changed; see the dry run. "
+                        + "Switch on 'give the nodes whose id is taken a new id' to restore them under new ids.");
+            }
+            phases.start("Choosing new ids");
+            sourceAll = sourceFast != null ? sourceFast.allIds(build.workers(), progress) : Ids.all(source);
+            if (renumber.allocation() == RenumberOptions.Allocation.FILL_GAPS) {
+                remap = IdRemap.inGaps(clash, IdSet.union(targetIds, missing));
+            } else {
+                remap = IdRemap.above(clash, Math.max(targetIds.max(), sourceAll.max()) + 1);
+            }
+            log.accept(clash.size() + " selected ids are used by another node on the target; those nodes get new ids "
+                    + remap.newIds()[0] + ".." + remap.highestNewId());
         }
-        if (missing.size() == 0) {
+        if (missing.size() == 0 && clash.size() == 0) {
             throw new BuildException("Nothing to restore: " + (selected.size() == 0 ? "the selection matches no node in the source"
                     : "all " + selected.size() + " selected nodes are already on the target") + ". Nothing was changed.");
         }
-        IdSet confirmed = sameNeighbours(source, target, targetIds, missing, org, build.batchSize());
-        IdSet allowedEnds = IdSet.union(missing, confirmed);
-        log.accept(targetIds.size() + " nodes on the target, " + missing.size() + " to restore, " + present.size()
-                + " already there; highest id " + Math.max(targetIds.max(), missing.max()));
+        IdSet toExport = IdSet.union(missing, clash);
+        IdSet confirmed = sameNeighbours(source, target, targetIds, toExport, org, build.batchSize());
+        IdSet allowedEnds = IdSet.union(toExport, confirmed);
+        log.accept(targetIds.size() + " nodes on the target, " + toExport.size() + " to restore, " + present.size()
+                + " already there; highest id " + Math.max(targetIds.max(), Math.max(toExport.max(), remap.highestNewId())));
 
         Path csv = workspace.directory("csv");
         phases.start("Exporting the target to CSV");
         List<CsvExporter.Rule> targetRules = List.of(CsvExporter.Rule.out(targetIds));
+        Renumbering targetRenumbering = Renumbering.none();
+        Renumbering restoredRenumbering = Renumbering.none();
+        if (!remap.isEmpty()) {
+            // nodes of the company that are already on the target and the nodes being moved both point to the old ids
+            IdSet eligible = renumber.includeNewerNodes() ? null : targetIds.intersect(sourceAll);
+            targetRenumbering = new Renumbering(IdRemap.none(), ReferenceRewrite.forOrganisations(remap, org, selection.orgIds(),
+                    eligible, renumber.lists(), renumber.excluded()));
+            restoredRenumbering = new Renumbering(remap, ReferenceRewrite.forMovedNodes(remap, org, renumber.lists(), renumber.excluded()));
+        }
         CsvExporter.Export targetExport = targetFast != null
-                ? targetFast.export(targetIds, targetRules, "target-", csv, build.batchSize(), build.workers(), build.layoutColumns(), progress)
+                ? targetFast.export(targetIds, targetRules, "target-", csv, build.batchSize(), build.workers(), build.layoutColumns(),
+                        targetRenumbering, progress)
                 : new CsvExporter(CsvExporter.bolt(target), targetIds, targetRules, "target-", csv, build.batchSize(),
-                        build.workers(), build.layoutColumns(), progress).export();
+                        build.workers(), build.layoutColumns(), targetRenumbering, progress).export();
         phases.start("Exporting the nodes to restore to CSV");
         List<CsvExporter.Rule> restoredRules = List.of(CsvExporter.Rule.out(allowedEnds), CsvExporter.Rule.in(confirmed));
         CsvExporter.Export restoredExport = sourceFast != null
-                ? sourceFast.export(missing, restoredRules, "restored-", csv, build.batchSize(), build.workers(), build.layoutColumns(), progress)
-                : new CsvExporter(CsvExporter.bolt(source), missing, restoredRules, "restored-", csv, build.batchSize(),
-                        build.workers(), build.layoutColumns(), progress).export();
+                ? sourceFast.export(toExport, restoredRules, "restored-", csv, build.batchSize(), build.workers(), build.layoutColumns(),
+                        restoredRenumbering, progress)
+                : new CsvExporter(CsvExporter.bolt(source), toExport, restoredRules, "restored-", csv, build.batchSize(),
+                        build.workers(), build.layoutColumns(), restoredRenumbering, progress).export();
         log.accept(restoredExport.nodes() + " nodes and " + restoredExport.relationships() + " relationships restored; "
                 + restoredExport.relationshipsToOutside() + " relationships left out because their other end is not on the target");
+        Path mapping = null;
+        if (!remap.isEmpty()) {
+            phases.start("Rewriting references to the renumbered nodes");
+            long values = targetExport.rewrittenValues() + restoredExport.rewrittenValues();
+            long nodes = targetExport.rewrittenNodes() + restoredExport.rewrittenNodes();
+            log.accept("Rewrote " + values + " references to renumbered nodes in " + nodes + " nodes ("
+                    + restoredExport.rewrittenNodes() + " of the restored nodes, " + targetExport.rewrittenNodes()
+                    + " already on the target)");
+            mapping = writeMapping(source, remap, org, mappingFile, build.batchSize());
+            log.accept("Old id to new id of the " + remap.size() + " renumbered nodes: " + mapping);
+        }
 
         List<String> schema = build.copySchema() ? SchemaCopy.statements(target) : List.of();
         List<String> nodeFiles = new ArrayList<>(targetExport.nodeFiles());
@@ -203,7 +243,7 @@ public final class MergeService {
         relationshipFiles.addAll(restoredExport.relationshipFiles());
         NewDatabase.build(runner, csv, workspace.directory("data"), database, nodeFiles, relationshipFiles,
                 List.of(targetExport.fixups(), restoredExport.fixups()),
-                schema, Verifier.Expected.of(IdSet.union(targetIds, missing), targetExport, restoredExport),
+                schema, Verifier.Expected.of(IdSet.union(IdSet.union(targetIds, missing), remap.newIdSet()), targetExport, restoredExport),
                 build, phases, log);
 
         Path dump = null;
@@ -213,7 +253,7 @@ public final class MergeService {
             Files.createDirectories(outputFile.toAbsolutePath().getParent());
             dump = Files.move(produced, outputFile);
         }
-        return new Built(targetIds, missing, present.size(), targetExport, restoredExport, schema.size(), dump);
+        return new Built(targetIds, toExport, present.size() - clash.size(), targetExport, restoredExport, schema.size(), dump, mapping);
     }
 
     private Path backup(InstanceRunner runner, MergeTarget target, Path backupDirectory, Workspace workspace, String stamp,
@@ -243,7 +283,36 @@ public final class MergeService {
                 options.build().checkConsistency(), backup.toAbsolutePath().toString(), Files.size(backup),
                 built.dump() == null ? null : built.dump().toAbsolutePath().toString(),
                 built.dump() == null ? 0 : Files.size(built.dump()), swap, swap ? target.path().toAbsolutePath().toString() : null,
-                keepName, null, phases.all());
+                keepName, null, built.restoredExport().renumberedNodes(),
+                built.targetExport().rewrittenNodes() + built.restoredExport().rewrittenNodes(),
+                built.targetExport().rewrittenValues() + built.restoredExport().rewrittenValues(),
+                built.mapping() == null ? null : built.mapping().toAbsolutePath().toString(), phases.all());
+    }
+
+    /** Writes old id, new id, labels and organisation of every renumbered node, as CSV, for whoever needs to find them. */
+    private static Path writeMapping(Neo4jClient source, IdRemap remap, String org, Path file, int batch) throws IOException {
+        Files.createDirectories(file.toAbsolutePath().getParent());
+        long[] olds = remap.oldIds();
+        try (java.io.BufferedWriter out = Files.newBufferedWriter(file)) {
+            out.write("old_id,new_id,labels,org\n");
+            for (int from = 0; from < olds.length; from += batch) {
+                long[] slice = java.util.Arrays.copyOfRange(olds, from, Math.min(olds.length, from + batch));
+                Long2ObjectOpenHashMap<String> found = identities(source, slice, org);
+                for (long id : slice) {
+                    String identity = found.getOrDefault(id, "|-");
+                    int bar = identity.indexOf('|');
+                    String orgText = identity.substring(bar + 1);                    // "-" or "TYPE:value"
+                    orgText = orgText.equals("-") ? "" : orgText.substring(orgText.indexOf(':') + 1);
+                    out.write(id + "," + remap.map(id) + "," + csv(identity.substring(0, bar).replace(',', ';')) + ","
+                            + csv(orgText) + "\n");
+                }
+            }
+        }
+        return file;
+    }
+
+    private static String csv(String text) {
+        return text.contains("\"") || text.contains(",") || text.contains("\n") ? '"' + text.replace("\"", "\"\"") + '"' : text;
     }
 
     // ---- comparing source and target ----

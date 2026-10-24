@@ -17,11 +17,15 @@ public class MigrationStore {
     }
 
     public long create(String name, Endpoint source, Endpoint targetOrNull, String selectionYaml) {
+        return create(name, source, targetOrNull, selectionYaml, null);
+    }
+
+    public long create(String name, Endpoint source, Endpoint targetOrNull, String selectionYaml, String renumberJson) {
         KeyHolder keys = new GeneratedKeyHolder();
-        jdbc.sql("INSERT INTO migrations (name, source_id, target_id, source_name, target_name, selection_yaml, state) "
-                + "VALUES (?, ?, ?, ?, ?, ?, 'DRAFT')")
+        jdbc.sql("INSERT INTO migrations (name, source_id, target_id, source_name, target_name, selection_yaml, state, renumber_json) "
+                + "VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?)")
                 .params(name, source.id(), targetOrNull == null ? null : targetOrNull.id(), source.name(),
-                        targetOrNull == null ? null : targetOrNull.name(), selectionYaml)
+                        targetOrNull == null ? null : targetOrNull.name(), selectionYaml, renumberJson)
                 .update(keys);
         return keys.getKey().longValue();
     }
@@ -50,6 +54,20 @@ public class MigrationStore {
     public void dryRunDone(long id, long dryRunId) {
         jdbc.sql("UPDATE migrations SET state = 'DRY_RUN_DONE', dry_run_id = ?, run_json = NULL, last_error = NULL WHERE id = ?")
                 .params(dryRunId, id).update();
+    }
+
+    /**
+     * Changes how a merge treats a selected id that is taken. The dry run was made with the old options, so it no longer
+     * describes the run: the migration goes back to PLANNED (its report is kept).
+     */
+    public void renumberChanged(long id, String renumberJson) {
+        jdbc.sql("UPDATE migrations SET renumber_json = ?, state = IF(state IN ('DRY_RUN_DONE', 'RUN_DONE'), 'PLANNED', state), "
+                + "dry_run_id = NULL, run_json = NULL WHERE id = ?").params(renumberJson, id).update();
+    }
+
+    /** Changes only the properties that are left alone; the dry run is still what the run will do. */
+    public void excludedChanged(long id, String renumberJson) {
+        jdbc.sql("UPDATE migrations SET renumber_json = ? WHERE id = ?").params(renumberJson, id).update();
     }
 
     public void ran(long id, String runJson) {
@@ -81,6 +99,6 @@ public class MigrationStore {
         return new Migration(rs.getLong("id"), rs.getString("name"), rs.getLong("source_id"), target,
                 rs.getString("source_name"), rs.getString("target_name"), rs.getString("selection_yaml"),
                 Migration.State.valueOf(rs.getString("state")), rs.getString("plan_json"), dryRun, rs.getString("run_json"), rs.getString("last_error"),
-                rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
+                rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant(), rs.getString("renumber_json"));
     }
 }

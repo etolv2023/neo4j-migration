@@ -1,5 +1,6 @@
 package com.etolv.neo4jtool.engine.dryrun;
 
+import com.etolv.neo4jtool.engine.build.RenumberPlanner;
 import com.etolv.neo4jtool.engine.schema.SchemaSnapshot.OrgCount;
 import com.etolv.neo4jtool.engine.selection.SelectionConfig;
 import java.util.List;
@@ -24,9 +25,21 @@ public record DryRunReport(
         NodeComparison nodes,
         RelationshipAnalysis relationships,
         Gate gate,
-        List<String> gateReasons) {
+        List<String> gateReasons,
+        RenumberPlanner.Plan renumbering) {
 
-    /** BLOCKED: some selected ids are already used by a different node on the target. */
+    public DryRunReport(String startedAt, String finishedAt, long durationMillis, String sourceVersion, String sourceDatabase,
+                        String targetVersion, String targetDatabase, SelectionConfig selection, boolean selectsEverything,
+                        long selectedNodes, List<LabelCount> selectedByLabel, List<OrgCount> selectedByOrg, NodeComparison nodes,
+                        RelationshipAnalysis relationships, Gate gate, List<String> gateReasons) {
+        this(startedAt, finishedAt, durationMillis, sourceVersion, sourceDatabase, targetVersion, targetDatabase, selection,
+                selectsEverything, selectedNodes, selectedByLabel, selectedByOrg, nodes, relationships, gate, gateReasons, null);
+    }
+
+    /**
+     * BLOCKED: some selected ids are already used by a different node on the target and renumbering is off. With it on, such
+     * nodes get new ids and the gate is at most WARN.
+     */
     public enum Gate { CLEAR, WARN, BLOCKED }
 
     public record LabelCount(String label, long count) {

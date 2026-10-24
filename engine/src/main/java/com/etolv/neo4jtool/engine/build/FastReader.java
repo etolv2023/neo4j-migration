@@ -19,8 +19,18 @@ public interface FastReader extends AutoCloseable {
     IdSet allIds(int workers, DryRunProgress progress);
 
     /** Same as {@code new CsvExporter(...).export()}, run inside the reader process. */
+    default CsvExporter.Export export(IdSet ids, List<CsvExporter.Rule> rules, String prefix, Path directory, int batchSize,
+                                      int workers, int layoutColumns, DryRunProgress progress) {
+        return export(ids, rules, prefix, directory, batchSize, workers, layoutColumns, Renumbering.none(), progress);
+    }
+
+    /** Same as {@code new CsvExporter(..., renumbering, ...).export()}, run inside the reader process. */
     CsvExporter.Export export(IdSet ids, List<CsvExporter.Rule> rules, String prefix, Path directory, int batchSize, int workers,
-                              int layoutColumns, DryRunProgress progress);
+                              int layoutColumns, Renumbering renumbering, DryRunProgress progress);
+
+    /** Same as {@link ReferenceScan#run}, run inside the reader process. */
+    ReferenceScan.Result scanReferences(String scope, IdSet ids, IdRemap remap, String orgProperty, boolean lists, int batchSize,
+                                        int workers, int examples, DryRunProgress progress);
 
     /** Same as {@link Verifier#verify}, run inside the reader process on the database it holds open. */
     void verify(Verifier.Expected expected, int batchSize, int workers, DryRunProgress progress);

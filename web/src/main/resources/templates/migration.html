@@ -82,6 +82,15 @@
         </div>
         <p class="sub" th:if="${plan == null}">Make the plan first.</p>
         <ol class="tl" data-steps="dry_run"></ol>
+        <details class="renumber-options" th:unless="${migration.isSplit()}" style="margin:8px 0 12px">
+            <summary><b>When an id is taken on the target:</b>
+                <span th:text="${renumber.enabled()} ? 'give the node a new id and follow it in the properties' : 'stop (the dry run is blocked)'"></span></summary>
+            <form th:action="@{/migrations/{id}/renumber(id=${migration.id()})}" method="post" style="margin-top:10px">
+                <th:block th:replace="~{renumber-options :: fields(${renumber})}"></th:block>
+                <button type="submit" class="secondary" th:disabled="${migration.state().busy() || migration.state().name() == 'RUN_DONE'}">Save</button>
+                <span class="hint" th:if="${dryRun != null}">The dry run is made again after this.</span>
+            </form>
+        </details>
         <p class="sub" th:if="${plan != null && dryRun == null}">Compares the selected nodes with the target, id by id, and checks their relationships. Nothing is changed.</p>
         <th:block th:if="${dryRun != null}">
             <p><span th:class="${'badge ' + dryRun.gate()}" th:text="${dryRun.gate()}"></span>
@@ -150,6 +159,9 @@
                     <div class="stat"><div class="l">Already there</div><div class="big" th:text="${@fmt.number(merge.alreadyThereNodes())}"></div></div>
                     <div class="stat"><div class="l">Relationships restored</div><div class="big" th:text="${@fmt.number(merge.restoredRelationships())}"></div></div>
                     <div class="stat"><div class="l">Left out (other end not on target)</div><div class="big" th:text="${@fmt.number(merge.droppedRelationships())}"></div></div>
+                    <div class="stat" th:if="${merge.renumberedNodes() > 0}"><div class="l">Restored under a new id</div><div class="big" th:text="${@fmt.number(merge.renumberedNodes())}"></div></div>
+                    <div class="stat" th:if="${merge.renumberedNodes() > 0}"><div class="l">Properties changed to the new id</div><div class="big" th:text="${@fmt.number(merge.rewrittenValues())}"></div></div>
+                    <div class="stat" th:if="${merge.renumberedNodes() > 0}"><div class="l">Nodes with such a property</div><div class="big" th:text="${@fmt.number(merge.rewrittenNodes())}"></div></div>
                 </div>
                 <table class="kv" style="margin-top:12px">
                     <tbody>
@@ -158,10 +170,12 @@
                         <span th:if="${merge.rolledBackAt() == null}">— the old one is kept in <span class="mono" th:text="${merge.keepName()}"></span></span>
                         <span th:if="${merge.rolledBackAt() != null}">— rolled back; the one that was swapped in is kept in <span class="mono" th:text="${'rolled-back-' + merge.keepName()}"></span></span></td></tr>
                     <tr th:unless="${merge.swapped()}"><td>Merged dump</td><td><span class="mono" th:text="${merge.outputFile()}"></span> <span class="muted" th:text="${'(' + @fmt.number(merge.outputBytes()) + ' bytes)'}"></span></td></tr>
+                    <tr th:if="${merge.idMappingFile() != null}"><td>Old id → new id</td><td><span class="mono" th:text="${merge.idMappingFile()}"></span>
+                        <span class="muted">(one line per node: old id, new id, labels, organisation)</span></td></tr>
                     <tr><td>Checked</td><td>The new database was read back and compared with everything that was exported, node by node and relationship by relationship<span th:if="${merge.consistencyChecked()}">; the store passed <span class="mono">neo4j-admin database check</span></span>.</td></tr>
                     </tbody>
                 </table>
-                <p class="hint">Relationship ids are new in the whole database; node ids are all kept. Relationships of restored nodes whose other end is not on the target are not restored.</p>
+                <p class="hint">Relationship ids are new in the whole database; node ids are all kept<span th:if="${merge.renumberedNodes() > 0}"> except those of the nodes that were restored under a new id</span>. Relationships of restored nodes whose other end is not on the target are not restored.</p>
                 <form th:if="${merge.swapped() && merge.rolledBackAt() == null}" th:action="@{/migrations/{id}/rollback(id=${migration.id()})}" method="post" style="margin-top:12px">
                     <button class="danger" type="submit" th:disabled="${migration.state().busy()}">Roll back</button>
                     <span class="hint">Puts the old database back. The server of this data directory must be stopped.</span>

@@ -34,7 +34,12 @@ final class RunSteps {
     }
 
     /** What the steps depend on: the names of the databases and the settings. {@code target} is null for a split. */
-    record Context(String source, String target, boolean swap, boolean directoryOutput, boolean check, boolean analyse) {
+    record Context(String source, String target, boolean swap, boolean directoryOutput, boolean check, boolean analyse,
+                   boolean renumber) {
+
+        Context(String source, String target, boolean swap, boolean directoryOutput, boolean check, boolean analyse) {
+            this(source, target, swap, directoryOutput, check, analyse, false);
+        }
     }
 
     private RunSteps() {
@@ -61,6 +66,10 @@ final class RunSteps {
             steps.add(new Def("Compare them with the target", false, List.of("Comparing with the target")));
         }
         steps.add(new Def("Analyse the relationships", !c.analyse(), List.of("Analysing relationships")));
+        steps.add(new Def("Choose the new ids", true, List.of("Choosing new ids")));
+        steps.add(new Def("Look for the old ids in the moved nodes", true, List.of("Looking for the old ids in the properties")));
+        steps.add(new Def("Look for the old ids in the company's nodes on the target", true,
+                List.of("Looking for the old ids in the company's nodes")));
         return steps;
     }
 
@@ -70,8 +79,11 @@ final class RunSteps {
         steps.add(new Def("Back up the target", false, List.of("Backing up the target")));
         steps.add(new Def("Load the backup", true, List.of("Loading the backup")));
         steps.add(new Def("Compare the selection with the target", false, List.of("Comparing the selection")));
+        steps.add(new Def("Choose the new ids", !c.renumber(), List.of("Choosing new ids")));
         steps.add(new Def("Export the target to CSV", false, List.of("Exporting the target")));
         steps.add(new Def("Export the nodes to restore", false, List.of("Exporting the nodes to restore")));
+        steps.add(new Def("Replace the old ids in the properties (done while the CSV is written)", true,
+                List.of("Rewriting references")));
         addBuildSteps(steps, c);
         steps.add(c.swap()
                 ? new Def("Swap the new database into the data directory", false, List.of("Swapping the new database"))

@@ -18,6 +18,10 @@ import java.util.List;
  * @param dataDirectory           the data directory that was swapped (null when not swapped)
  * @param keepName                the folder in the data directory that holds the old database (null when not swapped)
  * @param rolledBackAt            when the swap was undone, otherwise null
+ * @param renumberedNodes         restored nodes that got a new id because their own was used by another node on the target
+ * @param rewrittenNodes          nodes in which a property value that was an old id was replaced by the new id
+ * @param rewrittenValues         how many property values were replaced
+ * @param idMappingFile           the file that lists old id and new id of every renumbered node (null when none was)
  */
 public record MergeResult(
         String startedAt,
@@ -40,11 +44,16 @@ public record MergeResult(
         String dataDirectory,
         String keepName,
         String rolledBackAt,
+        long renumberedNodes,
+        long rewrittenNodes,
+        long rewrittenValues,
+        String idMappingFile,
         List<Phase> phases) {
 
     public MergeResult withRolledBackAt(String time) {
         return new MergeResult(startedAt, finishedAt, database, targetNodes, restoredNodes, alreadyThereNodes, targetRelationships,
                 restoredRelationships, droppedRelationships, propertiesWrittenAfter, schemaStatements, consistencyChecked,
-                backupFile, backupBytes, outputFile, outputBytes, swapped, dataDirectory, keepName, time, phases);
+                backupFile, backupBytes, outputFile, outputBytes, swapped, dataDirectory, keepName, time, renumberedNodes,
+                rewrittenNodes, rewrittenValues, idMappingFile, phases);
     }
 }

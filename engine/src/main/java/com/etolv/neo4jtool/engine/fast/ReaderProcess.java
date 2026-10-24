@@ -5,6 +5,8 @@ import com.etolv.neo4jtool.engine.build.CsvExporter;
 import com.etolv.neo4jtool.engine.build.FastReader;
 import com.etolv.neo4jtool.engine.build.Fixups;
 import com.etolv.neo4jtool.engine.build.IdSet;
+import com.etolv.neo4jtool.engine.build.ReferenceRewrite;
+import com.etolv.neo4jtool.engine.build.Renumbering;
 import com.etolv.neo4jtool.engine.build.Verifier;
 import com.etolv.neo4jtool.engine.dryrun.DryRunProgress;
 import com.etolv.neo4jtool.engine.selection.SelectionConfig;
@@ -282,8 +284,9 @@ public final class ReaderProcess implements FastReader {
 
     @Override
     public CsvExporter.Export export(IdSet ids, List<CsvExporter.Rule> rules, String prefix, Path directory, int batchSize,
-                                     int workers, int layoutColumns, DryRunProgress progress) {
+                                     int workers, int layoutColumns, Renumbering renumbering, DryRunProgress progress) {
         Map<IdSet, Path> written = new IdentityHashMap<>();
+        List<Path> remapFiles = new ArrayList<>();
         ObjectNode args = JSON.createObjectNode();
         args.put("ids", fileOf(written, ids));
         ArrayNode ruleList = args.putArray("rules");
@@ -297,6 +300,35 @@ public final class ReaderProcess implements FastReader {
         args.put("batch", batchSize);
         args.put("workers", workers);
         args.put("layoutColumns", layoutColumns);
+        if (!renumbering.ids().isEmpty()) {
+            args.put("idRemap", remapFile(remapFiles, renumbering.ids()));
+        }
+        ReferenceRewrite rewrite = renumbering.rewrite();
+        if (rewrite != null) {
+            ObjectNode r = args.putObject("rewrite");
+            r.put("remap", remapFile(remapFiles, rewrite.remap()));
+            r.put("orgProperty", rewrite.orgProperty());
+            r.put("lists", rewrite.lists());
+            ArrayNode excluded = r.putArray("excluded");
+            rewrite.excluded().forEach(excluded::add);
+            if (rewrite.organisations() != null) {
+                ArrayNode orgs = r.putArray("orgIds");
+                for (Object value : rewrite.organisations()) {
+                    if (value instanceof Long n) {
+                        orgs.add(n.longValue());
+                    } else if (value instanceof Number n) {
+                        orgs.add(n.doubleValue());
+                    } else if (value instanceof Boolean b) {
+                        orgs.add(b);
+                    } else {
+                        orgs.add(value.toString());
+                    }
+                }
+            }
+            if (rewrite.eligible() != null) {
+                r.put("eligible", fileOf(written, rewrite.eligible()));
+            }
+        }
         try {
             JsonNode result = call("export", args, progress);
             List<String> nodeFiles = new ArrayList<>();
@@ -308,8 +340,16 @@ public final class ReaderProcess implements FastReader {
             return new CsvExporter.Export(nodeFiles, relationshipFiles, result.path("nodes").asLong(),
                     result.path("relationships").asLong(), result.path("nodeFingerprint").asLong(),
                     result.path("relationshipFingerprint").asLong(), new Fixups(result.path("fixupCount").asLong(), fixupFiles),
-                    result.path("outside").asLong());
+                    result.path("outside").asLong(), result.path("renumberedNodes").asLong(), result.path("rewrittenNodes").asLong(),
+                    result.path("rewrittenValues").asLong());
         } finally {
+            for (Path file : remapFiles) {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException ignored) {
+                    // removed with the exchange directory
+                }
+            }
             for (Path file : written.values()) {
                 try {
                     Files.deleteIfExists(file);
@@ -318,6 +358,52 @@ public final class ReaderProcess implements FastReader {
                 }
             }
         }
+    }
+
+    @Override
+    public com.etolv.neo4jtool.engine.build.ReferenceScan.Result scanReferences(String scope, IdSet ids,
+                                                                                 com.etolv.neo4jtool.engine.build.IdRemap remap,
+                                                                                 String orgProperty, boolean lists, int batchSize,
+                                                                                 int workers, int examples, DryRunProgress progress) {
+        Map<IdSet, Path> written = new IdentityHashMap<>();
+        List<Path> remapFiles = new ArrayList<>();
+        ObjectNode args = JSON.createObjectNode();
+        args.put("scope", scope);
+        args.put("ids", fileOf(written, ids));
+        args.put("remap", remapFile(remapFiles, remap));
+        args.put("orgProperty", orgProperty);
+        args.put("lists", lists);
+        args.put("batch", batchSize);
+        args.put("workers", workers);
+        args.put("examples", examples);
+        try {
+            JsonNode result = call("scan", args, progress);
+            return JSON.treeToValue(result, com.etolv.neo4jtool.engine.build.ReferenceScan.Result.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new BuildException("The fast reader answered something unexpected: " + e.getMessage(), e);
+        } finally {
+            for (Path file : remapFiles) {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException ignored) {
+                    // removed with the exchange directory
+                }
+            }
+            for (Path file : written.values()) {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException ignored) {
+                    // removed with the exchange directory
+                }
+            }
+        }
+    }
+
+    private String remapFile(List<Path> files, com.etolv.neo4jtool.engine.build.IdRemap remap) {
+        Path file = exchange.resolve("remap-" + System.nanoTime() + ".pairs");
+        remap.write(file);
+        files.add(file);
+        return file.toString();
     }
 
     private String fileOf(Map<IdSet, Path> written, IdSet set) {

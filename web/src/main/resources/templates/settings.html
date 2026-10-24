@@ -37,6 +37,9 @@
         </div>
         <label class="check"><input type="checkbox" name="mergeSwap" value="true" th:checked="${settings.mergeSwap()}"> A merge into a stopped data directory puts the new database in its place</label>
         <p class="hint">The old database is kept next to it and can be rolled back. Switch it off to only write the merged dump file and swap by hand.</p>
+        <h2 style="margin-top:20px">When an id is taken on the target</h2>
+        <p class="hint">What a new merge starts with; each migration keeps its own choice.</p>
+        <th:block th:replace="~{renumber-options :: fields(${settings.renumber()})}"></th:block>
         <label class="check"><input type="checkbox" name="splitAsDirectory" value="true" th:checked="${settings.splitAsDirectory()}"> A split leaves a data directory instead of a dump file</label>
         <p class="hint">Saves writing the whole store as a dump and loading it again. The directory has <span class="mono">databases/</span> and <span class="mono">transactions/</span> in it; copy it into a stopped server's data directory, or add it here as a stopped data directory.</p>
         <label class="check"><input type="checkbox" name="copySchema" value="true" th:checked="${settings.copySchema()}"> Create the same indexes and constraints in the new database</label>

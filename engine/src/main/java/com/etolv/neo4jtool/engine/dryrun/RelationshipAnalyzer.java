@@ -24,7 +24,8 @@ import org.neo4j.driver.Session;
 
 /**
  * Looks at the relationships of the nodes that matter for a run and decides what would happen to each:
- * with a target, the relationships of the nodes missing on the target; without one, those of all selected nodes.
+ * with a target, the relationships of the nodes missing on the target (and of the nodes whose id is taken, when those are
+ * restored under new ids); without one, those of all selected nodes.
  */
 final class RelationshipAnalyzer {
 
@@ -100,7 +101,8 @@ final class RelationshipAnalyzer {
     }
 
     private boolean inScope(int index) {
-        return target == null || nodes.status(index) == DryRunService.MISSING;
+        return target == null || nodes.status(index) == DryRunService.MISSING
+                || (options.renumber().enabled() && nodes.status(index) == DryRunService.CONFLICT);
     }
 
     private void processBatch(long[] batchIds) {

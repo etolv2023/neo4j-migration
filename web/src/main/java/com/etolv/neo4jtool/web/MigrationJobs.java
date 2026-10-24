@@ -320,7 +320,8 @@ public class MigrationJobs {
                     .orElseThrow(() -> new IllegalStateException("The target '" + migration.targetName() + "' was deleted"));
             SelectionConfig selection = SelectionConfigParser.parse(migration.selectionYaml());
             AppSettings current = settings.get();
-            DryRunOptions options = new DryRunOptions(current.batchSize(), current.sampleSize(), current.analyseRelationships());
+            DryRunOptions options = new DryRunOptions(current.batchSize(), current.sampleSize(), current.analyseRelationships())
+                    .withRenumber(target == null ? null : migration.renumber(), current.workers());
             reportId = reports.begin(migration.id(), migration.sourceName(), migration.targetName(), migration.selectionYaml(), options);
 
             enter(migration.id(), "Opening '" + source.name() + "'");
@@ -332,7 +333,8 @@ public class MigrationJobs {
                         enter(migration.id(), "Opening '" + target.name() + "'");
                         to = endpointService.open(target, out);
                     }
-                    report = dryRunService.run(from.client(), to == null ? null : to.client(), selection, options, progress(migration, out));
+                    report = dryRunService.run(from.client(), from.fast(), to == null ? null : to.client(), to == null ? null : to.fast(),
+                            selection, options, progress(migration, out));
                 } finally {
                     if (to != null) {
                         to.close();
@@ -391,7 +393,7 @@ public class MigrationJobs {
                     ? MergeTarget.dataDirectory(Path.of(target.path()), target.database())
                     : MergeTarget.dump(Path.of(target.path()), target.database());
             Path output = Path.of(current.outputDir(), fileName(migration, true));
-            MergeOptions options = new MergeOptions(buildOptions(current), current.mergeSwap());
+            MergeOptions options = new MergeOptions(buildOptions(current), current.mergeSwap(), migration.renumber());
             enter(migration.id(), "Opening '" + source.name() + "'");
             MergeResult result;
             try (Opened from = endpointService.open(source, out)) {

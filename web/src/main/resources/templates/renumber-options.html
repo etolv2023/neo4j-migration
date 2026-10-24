@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<!-- The options for a selected node whose id the target already uses. Needs ${renumber} (RenumberOptions). -->
+<th:block th:fragment="fields(renumber)">
+    <label class="check"><input type="checkbox" name="renumber" value="true" th:checked="${renumber.enabled()}"> Give a node whose id is taken on the target a new id, and follow it in the properties</label>
+    <p class="hint">Only for a merge. Neo4j reuses ids of deleted nodes, so some ids of the company's lost nodes may now belong to other nodes on the target. Off: the merge stops
+        when that happens. On: those nodes are restored under new ids (their relationships follow), and every property of the company's nodes that holds exactly the old id as a whole
+        number or as a text of its digits (<span class="mono">12</span> or <span class="mono">"12"</span>, never <span class="mono">122</span>) is changed to the new id.
+        The dry run lists the new ids and the properties it found before anything is changed.</p>
+    <div class="row">
+        <div><label for="renumberAllocation">New ids</label>
+            <select id="renumberAllocation" name="renumberAllocation">
+                <option value="ABOVE_HIGHEST" th:selected="${renumber.allocation().name() == 'ABOVE_HIGHEST'}">Above the highest id (recommended)</option>
+                <option value="FILL_GAPS" th:selected="${renumber.allocation().name() == 'FILL_GAPS'}">Fill the free ids</option>
+            </select>
+            <p class="hint">Above the highest id of the source and the target never reuses an id that ever belonged to a node. Filling the free ids keeps the numbers small,
+                but an id that belonged to a deleted node is used again.</p></div>
+        <div>
+            <label class="check"><input type="checkbox" name="renumberLists" value="true" th:checked="${renumber.lists()}"> Also change the ids inside list properties</label>
+            <label class="check"><input type="checkbox" name="renumberIncludeNewer" value="true" th:checked="${renumber.includeNewerNodes()}"> Also change company nodes that were made after the backup</label>
+            <p class="hint">A company node that the source never had cannot hold the old id on purpose: its number most likely means the node that has that id now.
+                They are listed in the dry run and left alone unless this is ticked.</p></div>
+    </div>
+</th:block>
+</body>
+</html>

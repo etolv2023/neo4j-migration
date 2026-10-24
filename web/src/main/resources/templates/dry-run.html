@@ -15,7 +15,7 @@
 
     <th:block th:if="${report != null}">
         <div th:class="${'banner ' + report.gate().name()}">
-            <span th:text="${report.gate().name() == 'CLEAR' ? 'Clear: nothing stands in the way.' : (report.gate().name() == 'WARN' ? 'Warnings: read them before going on.' : 'Blocked: some selected ids are used by different nodes.')}"></span>
+            <span th:text="${report.gate().name() == 'CLEAR' ? 'Clear: nothing stands in the way.' : (report.gate().name() == 'WARN' ? 'Warnings: read them before going on.' : 'Blocked: some selected ids are used by different nodes. Switch on the option to give such a node a new id to go on.')}"></span>
             <ul th:if="${!report.gateReasons().isEmpty()}"><li th:each="reason : ${report.gateReasons()}" th:text="${reason}"></li></ul>
         </div>
         <p class="muted">Source Neo4j <span th:text="${report.sourceVersion()}"></span> (<span th:text="${report.sourceDatabase()}"></span>)
@@ -57,6 +57,75 @@
                 <h2 style="margin-top:18px">Examples of missing nodes</h2>
                 <table><thead><tr><th>Id</th><th>Labels</th><th>Org</th></tr></thead>
                     <tbody><tr th:each="s : ${report.nodes().missingSamples()}"><td th:text="${s.id()}"></td><td th:text="${s.labels()}"></td><td th:text="${s.org()}"></td></tr></tbody></table>
+            </th:block>
+        </div>
+
+
+        <div class="card" th:if="${report.renumbering() != null}" id="new-ids">
+            <h2>New ids</h2>
+            <p>These <b th:text="${@fmt.number(report.renumbering().nodes())}"></b> selected nodes have an id that another node uses on the target, so the merge would restore them under
+                new ids: <span th:text="${report.renumbering().allocation() == 'FILL_GAPS' ? 'the smallest free ids' : 'ids above the highest one in the source and the target'}"></span>,
+                from <b th:text="${report.renumbering().firstNewId()}"></b> to <b th:text="${report.renumbering().lastNewId()}"></b>. Their relationships follow them.
+                The ids are worked out again when the merge runs; they are the same if neither database changes in between.</p>
+            <p>
+                <a class="btn secondary" th:href="@{/dry-runs/{id}/id-mapping.csv(id=${row.id()})}">Download old id → new id (CSV)</a>
+                <span class="hint" th:if="${report.renumbering().mappingTruncated()}"
+                      th:text="${' The report keeps the first ' + @fmt.number(report.renumbering().mapping().size()) + '; the merge writes all of them to a file.'}"></span>
+            </p>
+            <table><thead><tr><th>Old id</th><th>New id</th><th>Node (source)</th><th>What holds the old id on the target</th></tr></thead>
+                <tbody><tr th:each="e, it : ${report.renumbering().mapping()}" th:if="${it.index < 200}">
+                    <td th:text="${e.oldId()}"></td><td th:text="${e.newId()}"></td>
+                    <td th:text="${(e.labels().isEmpty() ? '(no labels)' : #strings.listJoin(e.labels(), ' · ')) + ' · org ' + e.org()}"></td>
+                    <td th:text="${(e.targetLabels().isEmpty() ? '(no labels)' : #strings.listJoin(e.targetLabels(), ' · ')) + ' · org ' + e.targetOrg()}"></td></tr></tbody></table>
+            <p class="hint" th:if="${report.renumbering().mapping().size() > 200}">The first 200 are shown; the CSV has all of them.</p>
+
+            <th:block th:if="${report.renumbering().references() != null}"
+                      th:with="refs=${report.renumbering().references()}">
+                <h2 style="margin-top:24px">Properties that hold an old id</h2>
+                <p>Every property of the company's nodes whose value <b>is</b> an old id (a whole number, or a text of its plain digits<span th:if="${report.renumbering().lists()}">, also each element of a list</span>)
+                    would be changed to the new id. <span class="mono">122</span> is not <span class="mono">12</span>, and the property that holds the organisation is never changed.
+                    Relationship properties are not searched or changed. A value that only looks like an id (a phone number, a quantity) is changed too: tick its property below to leave it alone.</p>
+                <div class="stats">
+                    <div class="stat"><div class="l">In nodes to restore</div><div class="big" th:text="${@fmt.number(refs.moved().values())}"></div>
+                        <div class="muted" th:text="${'in ' + @fmt.number(refs.moved().nodesWithReferences()) + ' of ' + @fmt.number(refs.moved().nodesScanned()) + ' nodes'}"></div></div>
+                    <div class="stat"><div class="l">In company nodes already on the target</div><div class="big" th:text="${@fmt.number(refs.existing().values())}"></div>
+                        <div class="muted" th:text="${'in ' + @fmt.number(refs.existing().nodesWithReferences()) + ' of ' + @fmt.number(refs.existing().nodesScanned()) + ' nodes'}"></div></div>
+                    <div class="stat"><div class="l">In company nodes made after the backup</div><div class="big" th:text="${@fmt.number(refs.newer().values())}"></div>
+                        <div class="muted" th:text="${(report.renumbering().includeNewerNodes() ? 'will be changed' : 'skipped') + ' · ' + @fmt.number(refs.newer().nodesWithReferences()) + ' of ' + @fmt.number(refs.newer().nodesScanned()) + ' nodes'}"></div></div>
+                </div>
+
+                <th:block th:if="${!properties.isEmpty()}">
+                    <h2 style="margin-top:18px">Which properties</h2>
+                    <form th:action="@{/migrations/{id}/renumber/excluded(id=${row.migrationId()})}" method="post" th:if="${canChoose}">
+                        <p class="hint">Tick a property to leave it as it is, in all the nodes that have it. Nothing is changed by saving this; the merge uses it when it runs.</p>
+                        <table><thead><tr><th>Leave alone</th><th>Property</th><th class="num">To restore</th><th class="num">On the target</th><th class="num">After the backup</th></tr></thead>
+                            <tbody><tr th:each="p : ${properties}">
+                                <td><input type="checkbox" name="excluded" th:value="${p.name()}" th:checked="${p.excluded()}"></td>
+                                <td class="mono" th:text="${p.name()}"></td>
+                                <td class="num" th:text="${@fmt.number(p.moved())}"></td><td class="num" th:text="${@fmt.number(p.existing())}"></td>
+                                <td class="num" th:text="${@fmt.number(p.newer())}"></td></tr></tbody></table>
+                        <button type="submit" class="secondary" style="margin-top:10px">Save the choice</button>
+                    </form>
+                    <table th:unless="${canChoose}"><thead><tr><th>Property</th><th class="num">To restore</th><th class="num">On the target</th><th class="num">After the backup</th></tr></thead>
+                        <tbody><tr th:each="p : ${properties}"><td class="mono" th:text="${p.name()}"></td>
+                            <td class="num" th:text="${@fmt.number(p.moved())}"></td><td class="num" th:text="${@fmt.number(p.existing())}"></td>
+                            <td class="num" th:text="${@fmt.number(p.newer())}"></td></tr></tbody></table>
+                </th:block>
+                <p class="hint" th:if="${properties.isEmpty()}">No property of the company's nodes holds an old id.</p>
+
+                <th:block th:each="part : ${ {refs.moved(), refs.existing(), refs.newer()} }" th:if="${!part.groups().isEmpty()}">
+                    <h2 style="margin-top:18px" th:switch="${part.scope()}">
+                        <span th:case="'MOVED'">In the nodes to restore</span>
+                        <span th:case="'EXISTING'">In company nodes already on the target</span>
+                        <span th:case="*">In company nodes made after the backup <span class="pill" th:text="${report.renumbering().includeNewerNodes() ? 'changed' : 'skipped'}"></span></span>
+                    </h2>
+                    <p class="hint" th:if="${part.scope() == 'NEWER'}">The source does not have these nodes, so they were made after the backup. Their numbers most likely mean the nodes that hold those ids now.</p>
+                    <table><thead><tr><th>Labels</th><th>Property</th><th>Value</th><th class="num">Nodes</th><th>Examples (node: before → after)</th></tr></thead>
+                        <tbody><tr th:each="g : ${part.groups()}">
+                            <td th:text="${g.labels().isEmpty() ? '(no labels)' : g.labels()}"></td><td class="mono" th:text="${g.property()}"></td>
+                            <td th:text="${g.type()}"></td><td class="num" th:text="${@fmt.number(g.count())}"></td>
+                            <td class="mono"><span th:each="x, it : ${g.examples()}" th:text="${x.nodeId() + ': ' + x.before() + ' → ' + x.after() + (it.last ? '' : '; ')}"></span></td></tr></tbody></table>
+                </th:block>
             </th:block>
         </div>
 

@@ -177,6 +177,6 @@ public class LiveService {
         boolean stopped = m.targetId() != null
                 && endpoints.find(m.targetId()).map(e -> e.kind() == Endpoint.Kind.STOPPED).orElse(false);
         return new RunSteps.Context(m.sourceName(), m.targetName(), stopped && current.mergeSwap(), current.splitAsDirectory(),
-                current.checkAfterBuild(), current.analyseRelationships());
+                current.checkAfterBuild(), current.analyseRelationships(), m.renumber().enabled());
     }
 }

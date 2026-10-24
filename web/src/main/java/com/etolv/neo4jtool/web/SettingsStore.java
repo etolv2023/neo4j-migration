@@ -1,5 +1,6 @@
 package com.etolv.neo4jtool.web;
 
+import com.etolv.neo4jtool.engine.build.RenumberOptions;
 import com.etolv.neo4jtool.engine.instance.InstanceSettings;
 import java.util.HashMap;
 import java.util.Map;
@@ -51,7 +52,11 @@ public class SettingsStore {
                 Boolean.parseBoolean(rows.getOrDefault("require_two_factor", String.valueOf(d.requireTwoFactor()))),
                 Integer.parseInt(rows.getOrDefault("session_hours", String.valueOf(d.sessionHours()))),
                 Integer.parseInt(rows.getOrDefault("live_seconds", String.valueOf(d.liveSeconds()))),
-                Integer.parseInt(rows.getOrDefault("layout_columns", String.valueOf(d.layoutColumns()))));
+                Integer.parseInt(rows.getOrDefault("layout_columns", String.valueOf(d.layoutColumns()))),
+                new RenumberOptions(Boolean.parseBoolean(rows.getOrDefault("renumber_enabled", "false")),
+                        RenumberOptions.Allocation.valueOf(rows.getOrDefault("renumber_allocation", RenumberOptions.Allocation.ABOVE_HIGHEST.name())),
+                        Boolean.parseBoolean(rows.getOrDefault("renumber_lists", "true")),
+                        Boolean.parseBoolean(rows.getOrDefault("renumber_include_newer", "false")), java.util.Set.of()));
     }
 
     /** @throws IllegalArgumentException when a value cannot work */
@@ -88,6 +93,10 @@ public class SettingsStore {
         put("session_hours", String.valueOf(s.sessionHours()));
         put("live_seconds", String.valueOf(s.liveSeconds()));
         put("layout_columns", String.valueOf(s.layoutColumns()));
+        put("renumber_enabled", String.valueOf(s.renumber().enabled()));
+        put("renumber_allocation", s.renumber().allocation().name());
+        put("renumber_lists", String.valueOf(s.renumber().lists()));
+        put("renumber_include_newer", String.valueOf(s.renumber().includeNewerNodes()));
     }
 
     private static void validate(AppSettings s) {

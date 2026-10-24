@@ -76,7 +76,14 @@ public final class CsvExporter {
 
     /** What the export produced, with the numbers the finished database is checked against. */
     public record Export(List<String> nodeFiles, List<String> relationshipFiles, long nodes, long relationships,
-                         long nodeFingerprint, long relationshipFingerprint, Fixups fixups, long relationshipsToOutside) {
+                         long nodeFingerprint, long relationshipFingerprint, Fixups fixups, long relationshipsToOutside,
+                         long renumberedNodes, long rewrittenNodes, long rewrittenValues) {
+
+        public Export(List<String> nodeFiles, List<String> relationshipFiles, long nodes, long relationships,
+                      long nodeFingerprint, long relationshipFingerprint, Fixups fixups, long relationshipsToOutside) {
+            this(nodeFiles, relationshipFiles, nodes, relationships, nodeFingerprint, relationshipFingerprint, fixups,
+                    relationshipsToOutside, 0, 0, 0);
+        }
     }
 
     public interface NodeVisitor {
@@ -203,6 +210,7 @@ public final class CsvExporter {
     private final int batchSize;
     private final int workers;
     private final int layoutColumns;
+    private final Renumbering renumbering;
     private final DryRunProgress progress;
 
     private final Plans plans = new Plans();
@@ -224,6 +232,16 @@ public final class CsvExporter {
      */
     public CsvExporter(Source source, IdSet ids, List<Rule> rules, String filePrefix, Path directory, int batchSize,
                        int workers, int layoutColumns, DryRunProgress progress) {
+        this(source, ids, rules, filePrefix, directory, batchSize, workers, layoutColumns, Renumbering.none(), progress);
+    }
+
+    /**
+     * @param renumbering writes the nodes of {@code ids} that it names under their new id, with the ends of their
+     *                    relationships to match, and replaces the property values that are an old id (see {@link Renumbering})
+     */
+    public CsvExporter(Source source, IdSet ids, List<Rule> rules, String filePrefix, Path directory, int batchSize,
+                       int workers, int layoutColumns, Renumbering renumbering, DryRunProgress progress) {
+        this.renumbering = renumbering;
         this.layoutColumns = layoutColumns;
         this.source = source;
         this.ids = ids;
@@ -277,6 +295,9 @@ public final class CsvExporter {
         long nodeHash = 0;
         long relationshipHash = 0;
         long outside = 0;
+        long renumbered = 0;
+        long rewrittenNodes = 0;
+        long rewrittenValues = 0;
         List<Writers> nodeWriters = new ArrayList<>();
         List<Writers> relationshipWriters = new ArrayList<>();
         for (Scanner.Part<Pass2> part : written) {
@@ -289,12 +310,16 @@ public final class CsvExporter {
             nodeHash += local.nodeHash;
             relationshipHash += local.relationshipHash;
             outside += part.outside();
+            renumbered += local.renumberedNodes;
+            rewrittenNodes += local.rewrittenNodes;
+            rewrittenValues += local.rewrittenValues;
         }
         List<String> nodeFiles = nodeLayouts.finish("nodes", filePrefix, directory, nodeWriters);
         List<String> relationshipFiles = relationshipLayouts.finish("relationships", filePrefix, directory, relationshipWriters);
         progress.phase("Export: " + nodeLayouts.count() + " node layouts and " + relationshipLayouts.count()
                 + " relationship layouts written by " + written.size() + " workers");
-        return new Export(nodeFiles, relationshipFiles, nodes, relationships, nodeHash, relationshipHash, Fixups.of(fixupParts), outside);
+        return new Export(nodeFiles, relationshipFiles, nodes, relationships, nodeHash, relationshipHash, Fixups.of(fixupParts), outside,
+                renumbered, rewrittenNodes, rewrittenValues);
     }
 
     // ---- pass 1b: the combinations of conflicting types ----
@@ -484,6 +509,10 @@ public final class CsvExporter {
         long relationshipCount;
         long nodeHash;
         long relationshipHash;
+        long renumberedNodes;
+        long rewrittenNodes;
+        long rewrittenValues;
+        private final ReferenceRewrite.Listener counting = (property, before, after) -> rewrittenValues++;
 
         Pass2(int worker) {
             nodeFiles = new Writers("nodes", worker, true, nodeLayouts);
@@ -517,7 +546,19 @@ public final class CsvExporter {
         }
 
         @Override
-        public void accept(long id, List<String> labels, Map<String, Value> props) {
+        public void accept(long sourceId, List<String> labels, Map<String, Value> original) {
+            long id = renumbering.ids().map(sourceId);
+            if (id != sourceId) {
+                renumberedNodes++;
+            }
+            Map<String, Value> props = original;
+            ReferenceRewrite rewrite = renumbering.rewrite();
+            if (rewrite != null && rewrite.appliesTo(sourceId, original)) {
+                props = rewrite.apply(labels, original, counting);
+                if (props != original) {
+                    rewrittenNodes++;
+                }
+            }
             GroupPlan plan = plans.nodePlans.get(labelKey(labels));
             Map<String, ValueCodec.Encoded> cells = new LinkedHashMap<>();
             for (Map.Entry<String, Value> property : props.entrySet()) {
@@ -537,7 +578,9 @@ public final class CsvExporter {
         }
 
         @Override
-        public void accept(long start, long end, String type, long relationshipId, Map<String, Value> props) {
+        public void accept(long sourceStart, long sourceEnd, String type, long relationshipId, Map<String, Value> props) {
+            long start = renumbering.ids().map(sourceStart);
+            long end = renumbering.ids().map(sourceEnd);
             GroupPlan plan = plans.relationshipPlans.get(type);
             Map<String, ValueCodec.Encoded> cells = new LinkedHashMap<>();
             for (Map.Entry<String, Value> property : props.entrySet()) {

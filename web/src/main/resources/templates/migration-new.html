@@ -61,6 +61,8 @@
             <label class="check"><input type="checkbox" name="includeNeighbours" value="true" th:checked="${selection.includeNeighbours()}"> Also move nodes that have no organisation but are connected to a selected node</label>
             <p class="hint">For example the lines of an invoice when only the invoice carries the company. One step only. A connected node that has no organisation value (or an empty one) comes along; one that carries another company's value never does. The relationships that are left out are listed in the dry run.</p>
             <p class="hint">Leaving all of the fields above empty selects <b>every node</b>. The plan will warn you.</p>
+            <h2 style="margin-top:20px">When an id is taken on the target</h2>
+            <th:block th:replace="~{renumber-options :: fields(${renumber})}"></th:block>
         </div>
         <div class="actions"><button type="submit">Create migration</button><a class="btn secondary" th:href="@{/migrations}">Cancel</a></div>
     </form>
